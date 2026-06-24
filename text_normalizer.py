@@ -121,6 +121,9 @@ def normalize(text: str) -> str:
     # 1. URL → havola  (раньше expand_abbr, иначе HTTPS разберётся)
     text = re.sub(r'https?://\S+', 'havola', text, flags=re.IGNORECASE)
     text = re.sub(r'www\.\S+',     'sayt',   text, flags=re.IGNORECASE)
+    # Домены вида shop.uz, server.py и смешанные коды с точкой BV3.org2001
+    # Точку внутри слова заменяем пробелом ДО остальной обработки
+    text = re.sub(r'(?<=[A-Za-z0-9])\.(?=[A-Za-z0-9])', ' ', text)
 
     # 2. Email → elektron pochta
     text = re.sub(r'\S+@\S+\.\S+', 'elektron pochta', text)
@@ -161,10 +164,18 @@ def normalize(text: str) -> str:
     #     Но только если с обеих сторон буквы/цифры (не минус числа)
     text = re.sub(r'(?<=[A-Za-z0-9])-(?=[A-Za-z0-9])', ' ', text)
 
-    # 11. Смешанные коды BV3, XY456 → по буквам
+    # 11. Коды → по буквам
+    #     а) смешанные буквы+цифры: BV3, XY456
+    #     б) чисто буквенные капслоком 2+ букв: XY, ABC, VIP (если не в словаре)
     def mixed(m):
         tok = m.group(0)
-        if re.search(r'[A-Za-z]', tok) and re.search(r'\d', tok):
+        has_letter = bool(re.search(r'[A-Za-z]', tok))
+        has_digit  = bool(re.search(r'\d', tok))
+        # Смешанный код
+        if has_letter and has_digit:
+            return spell(tok)
+        # Все заглавные буквы 2-5 символов (артикулы, коды)
+        if has_letter and not has_digit and tok == tok.upper() and 2 <= len(tok) <= 5:
             return spell(tok)
         return tok
     text = re.sub(r'\b[A-Za-z0-9]{2,}\b', mixed, text)
