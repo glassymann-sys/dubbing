@@ -1,278 +1,320 @@
 <!DOCTYPE html>
 <html lang="uz">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>🎙️ Uzbek TTS — Ovoz Namunalari</title>
+  <title>🎙️ Uzbek TTS — Ovoz Generatori</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: 'Segoe UI', Tahoma, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 24px;
     }
 
     .container {
-      background: rgba(255,255,255,0.05);
-      backdrop-filter: blur(10px);
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(16px);
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 20px;
+      border-radius: 24px;
       padding: 40px;
-      max-width: 700px;
+      max-width: 720px;
       width: 100%;
       color: #fff;
     }
 
     h1 {
-      font-size: 1.8rem;
+      font-size: 1.9rem;
       margin-bottom: 6px;
-      background: linear-gradient(90deg, #e94560, #f5a623);
+      background: linear-gradient(90deg, #a78bfa, #60a5fa);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
     .subtitle {
-      color: rgba(255,255,255,0.5);
-      font-size: 0.9rem;
-      margin-bottom: 32px;
+      color: rgba(255,255,255,0.45);
+      font-size: 0.88rem;
+      margin-bottom: 10px;
     }
 
-    .model-badge {
-      display: inline-block;
-      background: rgba(233,69,96,0.2);
-      border: 1px solid rgba(233,69,96,0.4);
-      color: #e94560;
-      font-size: 0.75rem;
-      padding: 3px 10px;
-      border-radius: 20px;
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
       margin-bottom: 28px;
     }
 
+    .badge {
+      font-size: 0.72rem;
+      padding: 3px 11px;
+      border-radius: 20px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    .badge-ms   { background: rgba(96,165,250,0.15); border: 1px solid rgba(96,165,250,0.35); color: #60a5fa; }
+    .badge-free { background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.35); color: #34d399; }
+    .badge-uz   { background: rgba(251,191,36,0.15);  border: 1px solid rgba(251,191,36,0.35);  color: #fbbf24; }
+
+    /* ── ГОЛОСА ── */
+    .voice-selector {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .voice-btn {
+      flex: 1;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1.5px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05);
+      color: rgba(255,255,255,0.6);
+      cursor: pointer;
+      font-size: 0.88rem;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .voice-btn.active {
+      border-color: #a78bfa;
+      background: rgba(167,139,250,0.15);
+      color: #fff;
+    }
+
+    .voice-btn:hover { background: rgba(255,255,255,0.09); }
+
+    /* ── СЭМПЛЫ ── */
     .card {
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
       border-radius: 14px;
-      padding: 20px 22px;
-      margin-bottom: 16px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
       transition: all 0.2s;
     }
 
-    .card:hover {
-      background: rgba(255,255,255,0.11);
-      transform: translateY(-2px);
-    }
+    .card:hover { background: rgba(255,255,255,0.09); transform: translateY(-1px); }
 
-    .card-num {
-      font-size: 0.7rem;
-      color: rgba(255,255,255,0.35);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
+    .card-num  { font-size: 0.68rem; color: rgba(255,255,255,0.3); margin-bottom: 5px; letter-spacing: 1px; text-transform: uppercase; }
+    .card-text { font-size: 1rem; color: #fff; margin-bottom: 14px; line-height: 1.55; }
 
-    .card-text {
-      font-size: 1.05rem;
-      color: #fff;
-      margin-bottom: 14px;
-      line-height: 1.5;
-    }
-
-    .player-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
+    .player-row { display: flex; align-items: center; gap: 10px; }
 
     .play-btn {
-      width: 42px;
-      height: 42px;
+      width: 40px; height: 40px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #e94560, #f5a623);
-      border: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
       transition: transform 0.15s, opacity 0.15s;
     }
-
-    .play-btn:hover { transform: scale(1.1); }
-    .play-btn:active { transform: scale(0.95); }
-    .play-btn svg { width: 16px; height: 16px; fill: #fff; }
+    .play-btn:hover  { transform: scale(1.1); }
+    .play-btn:active { transform: scale(0.93); }
+    .play-btn svg    { width: 15px; height: 15px; fill: #fff; }
 
     .progress-wrap {
-      flex: 1;
-      height: 6px;
-      background: rgba(255,255,255,0.12);
-      border-radius: 3px;
-      overflow: hidden;
-      cursor: pointer;
+      flex: 1; height: 5px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px; overflow: hidden; cursor: pointer;
     }
-
     .progress-bar {
       height: 100%;
-      background: linear-gradient(90deg, #e94560, #f5a623);
-      width: 0%;
-      border-radius: 3px;
+      background: linear-gradient(90deg, #a78bfa, #60a5fa);
+      width: 0%; border-radius: 3px;
       transition: width 0.1s linear;
     }
+    .duration { font-size: 0.75rem; color: rgba(255,255,255,0.35); min-width: 36px; text-align: right; }
 
-    .duration {
-      font-size: 0.78rem;
+    .divider { border: none; border-top: 1px solid rgba(255,255,255,0.07); margin: 28px 0; }
+
+    /* ── ГЕНЕРАТОР ── */
+    .gen-section h2 { font-size: 1.05rem; margin-bottom: 14px; color: rgba(255,255,255,0.8); }
+
+    .controls-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .control-group {
+      flex: 1;
+    }
+
+    .control-group label {
+      display: block;
+      font-size: 0.72rem;
       color: rgba(255,255,255,0.4);
-      min-width: 38px;
-      text-align: right;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    .divider {
-      border: none;
-      border-top: 1px solid rgba(255,255,255,0.08);
-      margin: 28px 0;
+    select, input[type=range] {
+      width: 100%;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #fff;
+      font-size: 0.85rem;
+      outline: none;
     }
 
-    .generate-section h2 {
-      font-size: 1.1rem;
-      margin-bottom: 14px;
-      color: rgba(255,255,255,0.85);
-    }
+    select option { background: #302b63; }
 
     textarea {
       width: 100%;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
       padding: 14px;
       color: #fff;
       font-size: 0.95rem;
       resize: vertical;
-      min-height: 80px;
+      min-height: 90px;
       outline: none;
       font-family: inherit;
       transition: border-color 0.2s;
     }
-
-    textarea::placeholder { color: rgba(255,255,255,0.3); }
-    textarea:focus { border-color: rgba(233,69,96,0.5); }
+    textarea::placeholder { color: rgba(255,255,255,0.25); }
+    textarea:focus { border-color: rgba(167,139,250,0.5); }
 
     .gen-btn {
       margin-top: 12px;
       width: 100%;
-      padding: 13px;
-      background: linear-gradient(135deg, #e94560, #f5a623);
-      border: none;
-      border-radius: 10px;
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
+      padding: 14px;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      border: none; border-radius: 12px;
+      color: #fff; font-size: 1rem;
+      font-weight: 600; cursor: pointer;
       transition: opacity 0.2s, transform 0.15s;
     }
+    .gen-btn:hover   { opacity: 0.88; transform: translateY(-1px); }
+    .gen-btn:active  { transform: translateY(0); }
+    .gen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    .gen-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .api-note { margin-top: 8px; font-size: 0.75rem; color: rgba(255,255,255,0.3); text-align: center; }
 
-    .api-note {
+    #customPlayer { margin-top: 14px; }
+    #customPlayer audio { width: 100%; border-radius: 10px; }
+
+    .status-msg {
+      font-size: 0.85rem;
+      padding: 10px 14px;
+      border-radius: 10px;
       margin-top: 10px;
-      font-size: 0.78rem;
-      color: rgba(255,255,255,0.35);
-      text-align: center;
     }
+    .status-ok  { background: rgba(52,211,153,0.1); color: #34d399; border: 1px solid rgba(52,211,153,0.2); }
+    .status-err { background: rgba(239,68,68,0.1);  color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+    .status-loading { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.2); }
 
-    .footer {
-      margin-top: 28px;
-      font-size: 0.78rem;
-      color: rgba(255,255,255,0.25);
-      text-align: center;
-    }
-
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.8rem;
-      color: #4ade80;
-      margin-bottom: 20px;
-    }
-
-    .dot {
-      width: 8px; height: 8px;
-      background: #4ade80;
-      border-radius: 50%;
-      animation: pulse 1.8s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
+    .footer { margin-top: 28px; font-size: 0.72rem; color: rgba(255,255,255,0.2); text-align: center; }
   </style>
 </head>
 <body>
 <div class="container">
 
-  <h1>🎙️ Uzbek TTS Demo</h1>
-  <p class="subtitle">O'zbek tili uchun sun'iy intellekt ovozi</p>
-  <div class="model-badge">MMS-TTS · VITS Fine-tuned · Кириллица</div>
+  <h1>🎙️ Uzbek TTS</h1>
+  <p class="subtitle">Microsoft Edge TTS — Jonli o'zbek ovozi</p>
 
-  <div class="status">
-    <div class="dot"></div>
-    Tayyor — namunalarni tinglang
+  <div class="badge-row">
+    <span class="badge badge-ms">Microsoft Neural</span>
+    <span class="badge badge-free">Bepul / Бесплатно</span>
+    <span class="badge badge-uz">🇺🇿 O'zbek tili</span>
   </div>
 
-  <div id="samples">
-    <!-- Карточки с аудио сэмплами -->
+  <!-- Выбор голоса -->
+  <div class="voice-selector">
+    <div class="voice-btn active" onclick="setVoice('madina', this)">
+      👩 Madina <br><small style="opacity:.5">Ayol ovozi</small>
+    </div>
+    <div class="voice-btn" onclick="setVoice('sardor', this)">
+      👨 Sardor <br><small style="opacity:.5">Erkak ovozi</small>
+    </div>
   </div>
+
+  <!-- Тестовые сэмплы -->
+  <div id="samples"></div>
 
   <hr class="divider"/>
 
-  <div class="generate-section">
-    <h2>✍️ Ўз матнингизни синаб кўринг</h2>
-    <textarea id="customText" placeholder="Матн ёзинг (кириллица)...">Ўзбекистон — гўзал ва тарихий юрт.</textarea>
-    <button class="gen-btn" onclick="generateCustom()">
-      🚀 Генерация (API орқали)
+  <!-- Генератор своего текста -->
+  <div class="gen-section">
+    <h2>✍️ O'z matningizni sinab ko'ring</h2>
+
+    <div class="controls-row">
+      <div class="control-group">
+        <label>Tezlik / Скорость</label>
+        <select id="rateSelect">
+          <option value="-20%">🐢 Sekin (-20%)</option>
+          <option value="-10%">🚶 O'rtacha sekin (-10%)</option>
+          <option value="-5%" selected>✅ Tavsiya (-5%)</option>
+          <option value="0%">▶️ Normal (0%)</option>
+          <option value="+10%">🏃 Tez (+10%)</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Ovoz balandligi / Высота</label>
+        <select id="pitchSelect">
+          <option value="-5Hz">⬇️ Past (-5Hz)</option>
+          <option value="+0Hz" selected>✅ Normal (0Hz)</option>
+          <option value="+5Hz">⬆️ Baland (+5Hz)</option>
+        </select>
+      </div>
+    </div>
+
+    <textarea id="customText" placeholder="Matn yozing (lotin yoki kirill)...">O'zbekiston — go'zal va tarixiy yurt.</textarea>
+    <button class="gen-btn" id="genBtn" onclick="generateCustom()">
+      🚀 Ovoz yaratish
     </button>
-    <p class="api-note">⚙️ Бунинг учун сервер ишга тушган бўлиши керак: <code>python server.py</code></p>
-    <div id="customPlayer" style="margin-top:14px;"></div>
+    <p class="api-note">⚙️ Sever kerak: <code>python3 server.py</code> → http://localhost:8000</p>
+    <div id="customPlayer"></div>
   </div>
 
-  <p class="footer">
-    Модель: MuzaffarSharofitdinov/mms-tts-uzbek-girl-voice_cyrillic · HuggingFace
-  </p>
+  <p class="footer">Microsoft Edge TTS · uz-UZ-MadinaNeural / uz-UZ-SardorNeural · Bepul</p>
 </div>
 
 <script>
-  // Тестовые аудио файлы (генерируются через generate_audio.py)
   const samples = [
-    { text: "Салом! Мен сунъий интеллект ёрдамида яратилган овозман.", file: "audio_samples/sample_1.wav" },
-    { text: "Бугун об-ҳаво жуда яхши, осмон очиқ.", file: "audio_samples/sample_2.wav" },
-    { text: "Хуш келибсиз! Биз сизга ёрдам беришга тайёрмиз.", file: "audio_samples/sample_3.wav" },
-    { text: "Ўзбекистон — гўзал ва тарихий юрт.", file: "audio_samples/sample_4.wav" },
-    { text: "Саломатликни асранг ва бахтли бўлинг!", file: "audio_samples/sample_5.wav" },
+    { text: "Salom! Men sun'iy intellekt yordamida yaratilgan ovozman.", file: "audio_samples/sample_1.mp3" },
+    { text: "Bugun ob-havo juda yaxshi, osmon ochiq.",                   file: "audio_samples/sample_2.mp3" },
+    { text: "Xush kelibsiz! Biz sizga yordam berishga tayyormiz.",        file: "audio_samples/sample_3.mp3" },
+    { text: "O'zbekiston — go'zal va tarixiy yurt.",                     file: "audio_samples/sample_4.mp3" },
+    { text: "Sog'liqni asrang va baxtli bo'ling!",                       file: "audio_samples/sample_5.mp3" },
   ];
 
+  let currentVoice = "madina";
   const audios = {};
 
+  function setVoice(v, el) {
+    currentVoice = v;
+    document.querySelectorAll('.voice-btn').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  function playIcon()  { return `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`; }
+  function pauseIcon() { return `<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`; }
+  function fmtTime(s)  { return isNaN(s) ? '0:00' : `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`; }
+
   function buildSamples() {
-    const container = document.getElementById('samples');
+    const c = document.getElementById('samples');
     samples.forEach((s, i) => {
-      const id = `audio_${i}`;
       const audio = new Audio(s.file);
-      audios[id] = audio;
+      audios[i] = audio;
 
       audio.addEventListener('timeupdate', () => {
-        const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+        const pct = audio.duration ? (audio.currentTime / audio.duration * 100) : 0;
         const bar = document.getElementById(`bar_${i}`);
         const dur = document.getElementById(`dur_${i}`);
         if (bar) bar.style.width = pct + '%';
-        if (dur) {
-          const rem = audio.duration - audio.currentTime;
-          dur.textContent = isNaN(rem) ? '0:00' : formatTime(rem);
-        }
+        if (dur) dur.textContent = fmtTime(audio.duration - audio.currentTime);
       });
 
       audio.addEventListener('ended', () => {
@@ -282,13 +324,13 @@
         if (bar) bar.style.width = '0%';
       });
 
-      container.innerHTML += `
+      c.innerHTML += `
         <div class="card">
-          <div class="card-num">Намуна ${i + 1}</div>
+          <div class="card-num">Namuna ${i+1}</div>
           <div class="card-text">${s.text}</div>
           <div class="player-row">
             <button class="play-btn" id="btn_${i}" onclick="togglePlay(${i})">${playIcon()}</button>
-            <div class="progress-wrap" onclick="seek(event, ${i})">
+            <div class="progress-wrap" onclick="seek(event,${i})">
               <div class="progress-bar" id="bar_${i}"></div>
             </div>
             <span class="duration" id="dur_${i}">—</span>
@@ -297,77 +339,63 @@
     });
   }
 
-  function playIcon() {
-    return `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
-  }
-  function pauseIcon() {
-    return `<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
-  }
-
   function togglePlay(i) {
-    const id = `audio_${i}`;
-    const audio = audios[id];
-    const btn = document.getElementById(`btn_${i}`);
-
-    // Останавливаем все остальные
+    const audio = audios[i];
+    const btn   = document.getElementById(`btn_${i}`);
     Object.keys(audios).forEach(k => {
-      if (k !== id && !audios[k].paused) {
+      if (parseInt(k) !== i && !audios[k].paused) {
         audios[k].pause();
-        const idx = parseInt(k.split('_')[1]);
-        const b = document.getElementById(`btn_${idx}`);
+        const b = document.getElementById(`btn_${k}`);
         if (b) b.innerHTML = playIcon();
       }
     });
-
-    if (audio.paused) {
-      audio.play();
-      btn.innerHTML = pauseIcon();
-    } else {
-      audio.pause();
-      btn.innerHTML = playIcon();
-    }
+    if (audio.paused) { audio.play(); btn.innerHTML = pauseIcon(); }
+    else              { audio.pause(); btn.innerHTML = playIcon(); }
   }
 
   function seek(e, i) {
-    const audio = audios[`audio_${i}`];
+    const audio = audios[i];
     if (!audio.duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    audio.currentTime = pct * audio.duration;
-  }
-
-  function formatTime(sec) {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+    audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
   }
 
   async function generateCustom() {
-    const text = document.getElementById('customText').value.trim();
+    const text  = document.getElementById('customText').value.trim();
+    const rate  = document.getElementById('rateSelect').value;
+    const pitch = document.getElementById('pitchSelect').value;
     if (!text) return;
 
+    const btn    = document.getElementById('genBtn');
     const player = document.getElementById('customPlayer');
-    player.innerHTML = '<p style="color:rgba(255,255,255,0.5);font-size:0.9rem">⏳ Генерация...</p>';
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Yaratilmoqda...';
+    player.innerHTML = `<div class="status-msg status-loading">⏳ Ovoz yaratilmoqda...</div>`;
 
     try {
       const res = await fetch('http://localhost:8000/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, voice: currentVoice, rate, pitch })
       });
 
       if (!res.ok) throw new Error('Server error');
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const url  = URL.createObjectURL(blob);
       player.innerHTML = `
-        <audio controls style="width:100%;margin-top:8px;border-radius:8px;">
-          <source src="${url}" type="audio/wav">
+        <div class="status-msg status-ok">✅ Tayyor!</div>
+        <audio controls autoplay style="width:100%;margin-top:10px;border-radius:10px;">
+          <source src="${url}" type="audio/mpeg">
         </audio>`;
     } catch (e) {
-      player.innerHTML = `<p style="color:#e94560;font-size:0.85rem">
-        ❌ Сервер топилмади. Аввал: <code>python server.py</code> ни ишга туширинг.
-      </p>`;
+      player.innerHTML = `<div class="status-msg status-err">
+        ❌ Server topilmadi. Avval terminailda: <code>python3 server.py</code>
+      </div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🚀 Ovoz yaratish';
     }
   }
 

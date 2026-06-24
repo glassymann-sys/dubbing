@@ -1,20 +1,20 @@
 """
-Uzbek TTS — FastAPI сервер
-Запуск: python server.py
-Порт: http://localhost:8000
+Uzbek TTS — FastAPI сервер с Microsoft Edge TTS
+Голос: uz-UZ-MadinaNeural / uz-UZ-SardorNeural
 
-Поддерживает: Mac M1/M2 (MPS), NVIDIA (CUDA), CPU
+Запуск: python3 server.py
+Порт:   http://localhost:8000
 """
 
-from fastapi import FastAPI
+import asyncio
+import io
+import edge_tts
+from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import numpy as np
-import scipy.io.wavfile as wavfile
-import io
 
-app = FastAPI(title="Uzbek TTS API")
+app = FastAPI(title="Uzbek TTS API — Edge TTS")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,56 +23,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Определяем устройство автоматически ---
-import torch
+# Доступные голоса
+VOICES = {
+    "madina": "uz-UZ-MadinaNeural",   # женский
+    "sardor": "uz-UZ-SardorNeural",   # мужской
+}
 
-def get_device():
-    if torch.backends.mps.is_available():
-        print("🍎 Apple M1/M2 — используется MPS (Neural Engine)")
-        return torch.device("mps")
-    elif torch.cuda.is_available():
-        print("⚡ NVIDIA GPU — используется CUDA")
-        return torch.device("cuda")
-    else:
-        print("💻 GPU не найден — используется CPU")
-        return torch.device("cpu")
-
-# Модель загружается один раз при старте
-print("⏳ Загружаю TTS модель...")
-from transformers import VitsModel, AutoTokenizer
-
-MODEL_ID = "MuzaffarSharofitdinov/mms-tts-uzbek-girl-voice_cyrillic"
-DEVICE = get_device()
-
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = VitsModel.from_pretrained(MODEL_ID).to(DEVICE)
-model.eval()
-SAMPLE_RATE = model.config.sampling_rate
-print(f"✅ Модель готова! Устройство: {DEVICE} | Sample rate: {SAMPLE_RATE} Hz")
+DEFAULT_VOICE = "madina"
 
 
 class TTSRequest(BaseModel):
     text: str
+    voice: str = DEFAULT_VOICE   # "madina" или "sardor"
+    rate: str = "-5%"            # скорость: -10%, 0%, +10%
+    pitch: str = "+0Hz"          # высота: -5Hz, 0Hz, +5Hz
+
+
+async def synthesize_edge(text: str, voice_key: str, rate: str, pitch: str) -> bytes:
+    voice = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
+    buf = io.BytesIO()
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch)
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            buf.write(chunk["data"])
+    buf.seek(0)
+    return buf.read()
 
 
 @app.post("/tts")
-def synthesize(req: TTSRequest):
-    inputs = tokenizer(req.text, return_tensors="pt")
-    # Переносим inputs на то же устройство что и модель
-    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+async def tts(req: TTSRequest):
+    audio = await synthesize_edge(req.text, req.voice, req.rate, req.pitch)
+    return StreamingResponse(io.BytesIO(audio), media_type="audio/mpeg")
 
-    with torch.no_grad():
-        output = model(**inputs).waveform
 
-    waveform = output.squeeze().cpu().numpy()
-    waveform = waveform / (np.max(np.abs(waveform)) + 1e-8)
-    waveform_int16 = (waveform * 32767).astype(np.int16)
-
-    buf = io.BytesIO()
-    wavfile.write(buf, SAMPLE_RATE, waveform_int16)
-    buf.seek(0)
-
-    return StreamingResponse(buf, media_type="audio/wav")
+@app.get("/voices")
+def list_voices():
+    return {"voices": list(VOICES.keys()), "default": DEFAULT_VOICE}
 
 
 @app.get("/")
@@ -82,4 +68,7 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
+    print("🎤 Узбекский TTS сервер запущен!")
+    print("📡 http://localhost:8000")
+    print(f"🎙️  Голоса: {', '.join(VOICES.keys())}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
