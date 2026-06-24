@@ -118,12 +118,9 @@ MONTHS = {
 
 def normalize(text: str) -> str:
 
-    # 1. URL → havola  (раньше expand_abbr, иначе HTTPS разберётся)
+    # 1. URL → havola  (до expand_abbr, иначе HTTPS разберётся)
     text = re.sub(r'https?://\S+', 'havola', text, flags=re.IGNORECASE)
     text = re.sub(r'www\.\S+',     'sayt',   text, flags=re.IGNORECASE)
-    # Домены вида shop.uz, server.py и смешанные коды с точкой BV3.org2001
-    # Точку внутри слова заменяем пробелом ДО остальной обработки
-    text = re.sub(r'(?<=[A-Za-z0-9])\.(?=[A-Za-z0-9])', ' ', text)
 
     # 2. Email → elektron pochta
     text = re.sub(r'\S+@\S+\.\S+', 'elektron pochta', text)
@@ -135,18 +132,22 @@ def normalize(text: str) -> str:
         text,
     )
 
-    # 4. Дата ДД.ММ.ГГГГ
+    # 4. Дата ДД.ММ.ГГГГ — ОБЯЗАТЕЛЬНО до замены точек!
     def fmt_date(m):
         d, mo, y = m.group(1), m.group(2), m.group(3)
         return f"{num(int(d))} {MONTHS.get(mo, mo)}, {num(int(y))} yil"
     text = re.sub(r'\b(\d{1,2})\.(\d{2})\.(\d{4})\b', fmt_date, text)
 
-    # 5. Десятичные  1.5 → bir butun besh
+    # 5. Десятичные  1.5 → bir butun besh — ОБЯЗАТЕЛЬНО до замены точек!
     text = re.sub(
         r'\b(\d+)\.(\d+)\b',
         lambda m: num(int(m.group(1))) + " butun " + num(int(m.group(2))),
         text,
     )
+
+    # 5b. Точка между буквами → пробел  (после дат и десятичных!)
+    #     BV3.org2001 → BV3 org2001  |  server.py → server py
+    text = re.sub(r'(?<=[A-Za-z0-9])\.(?=[A-Za-z])', ' ', text)
 
     # 6. Проценты  30% → o'ttiz foiz
     text = re.sub(r'(\d+)\s*%', lambda m: num(int(m.group(1))) + " foiz", text)
