@@ -191,61 +191,71 @@ def create_dubbed_video(
     segments: list,
     output_path: str,
     temp_dir: str,
-    original_volume: float = 0.1
+    original_volume: float = 0.15
 ) -> str:
     """
     Собирает финальное видео:
-    - Оригинальный голос тихо на фоне (10%)
+    - Оригинальный голос тихо на фоне (15%)
     - Узбекский голос поверх (100%)
     """
     print("🎬 Собираю финальное видео...")
 
-    # Создаём файл с временными метками для каждого сегмента
-    # Используем ffmpeg filter_complex
+    # Сначала соединяем все TTS сегменты в один аудио файл с паузами
+    concat_list = os.path.join(temp_dir, "concat.txt")
+    merged_tts  = os.path.join(temp_dir, "merged_tts.mp3")
 
-    # Строим filter_complex для наложения всех аудио сегментов
-    filter_parts = []
+    # Получаем длину оригинального видео
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_format", original_video],
+        capture_output=True, text=True
+    )
+    video_duration = float(json.loads(probe.stdout)["format"]["duration"])
+
+    # Строим filter_complex
     input_args = ["-i", original_video]
-
-    # Добавляем каждый аудио сегмент как input
-    for i, seg in enumerate(segments):
+    for seg in segments:
         input_args += ["-i", seg["audio_file"]]
 
-    # Оригинальное аудио тихо
-    filter_parts.append(f"[0:a]volume={original_volume}[orig]")
+    n_segs = len(segments)
 
-    # Каждый сегмент с задержкой
+    # Оригинальный звук — тише
+    filters = [f"[0:a]volume={original_volume}[orig]"]
+
+    # Каждый TTS сегмент с задержкой по времени
     seg_labels = []
     for i, seg in enumerate(segments):
         delay_ms = int(seg["start"] * 1000)
-        label = f"seg{i}"
-        filter_parts.append(f"[{i+1}:a]adelay={delay_ms}|{delay_ms}[{label}]")
+        label = f"s{i}"
+        filters.append(f"[{i+1}:a]adelay={delay_ms}|{delay_ms},volume=1.8[{label}]")
         seg_labels.append(f"[{label}]")
 
-    # Микшируем всё вместе
-    all_labels = "[orig]" + "".join(seg_labels)
-    n_inputs = len(segments) + 1
-    filter_parts.append(f"{all_labels}amix=inputs={n_inputs}:normalize=0[aout]")
+    # Смешиваем всё
+    all_inputs = "[orig]" + "".join(seg_labels)
+    filters.append(
+        f"{all_inputs}amix=inputs={n_segs + 1}:normalize=0:dropout_transition=0[aout]"
+    )
 
-    filter_complex = ";".join(filter_parts)
+    filter_complex = ";".join(filters)
 
     cmd = [
         "ffmpeg",
         *input_args,
         "-filter_complex", filter_complex,
-        "-map", "0:v",      # видео из оригинала
-        "-map", "[aout]",   # наше смешанное аудио
-        "-c:v", "copy",     # видео без перекодирования
+        "-map", "0:v",
+        "-map", "[aout]",
+        "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "192k",
-        "-shortest",
+        "-t", str(video_duration),
         "-y",
         output_path
     ]
 
+    print(f"  ffmpeg команда готова, запускаю...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise Exception(f"ffmpeg error: {result.stderr}")
+        raise Exception(f"ffmpeg error: {result.stderr[-500:]}")
 
     print(f"✅ Видео готово: {output_path}")
     return output_path
