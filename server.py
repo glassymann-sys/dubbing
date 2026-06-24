@@ -1,20 +1,19 @@
 """
-Uzbek TTS — FastAPI сервер с Microsoft Edge TTS
+Uzbek TTS — FastAPI + Edge TTS + SSML
 Голос: uz-UZ-MadinaNeural / uz-UZ-SardorNeural
 
-Запуск: python3 server.py
-Порт:   http://localhost:8000
+Запуск: python3 server.py → http://localhost:8000
 """
 
 import asyncio
 import io
 import edge_tts
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Uzbek TTS API — Edge TTS")
+app = FastAPI(title="Uzbek TTS API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,26 +22,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Доступные голоса
 VOICES = {
-    "madina": "uz-UZ-MadinaNeural",   # женский
-    "sardor": "uz-UZ-SardorNeural",   # мужской
+    "madina": "uz-UZ-MadinaNeural",
+    "sardor": "uz-UZ-SardorNeural",
 }
 
-DEFAULT_VOICE = "madina"
+
+def build_ssml(text: str, voice: str, rate: str, pitch: str, style: str, styledegree: float) -> str:
+    return f"""<speak version="1.0"
+  xmlns="http://www.w3.org/2001/10/synthesis"
+  xmlns:mstts="https://www.w3.org/2001/mstts"
+  xml:lang="uz-UZ">
+  <voice name="{voice}">
+    <mstts:express-as style="{style}" styledegree="{styledegree}">
+      <prosody rate="{rate}" pitch="{pitch}">
+        {text}
+      </prosody>
+    </mstts:express-as>
+  </voice>
+</speak>"""
 
 
 class TTSRequest(BaseModel):
     text: str
-    voice: str = DEFAULT_VOICE   # "madina" или "sardor"
-    rate: str = "-5%"            # скорость: -10%, 0%, +10%
-    pitch: str = "+0Hz"          # высота: -5Hz, 0Hz, +5Hz
+    voice: str = "madina"
+    rate: str = "-8%"
+    pitch: str = "+1Hz"
+    style: str = "friendly"
+    styledegree: float = 1.5
 
 
-async def synthesize_edge(text: str, voice_key: str, rate: str, pitch: str) -> bytes:
-    voice = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
-    buf = io.BytesIO()
-    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch)
+async def synth(req: TTSRequest) -> bytes:
+    voice = VOICES.get(req.voice, VOICES["madina"])
+    ssml  = build_ssml(req.text, voice, req.rate, req.pitch, req.style, req.styledegree)
+    buf   = io.BytesIO()
+    communicate = edge_tts.Communicate(text=ssml, voice=voice)
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             buf.write(chunk["data"])
@@ -52,13 +66,13 @@ async def synthesize_edge(text: str, voice_key: str, rate: str, pitch: str) -> b
 
 @app.post("/tts")
 async def tts(req: TTSRequest):
-    audio = await synthesize_edge(req.text, req.voice, req.rate, req.pitch)
+    audio = await synth(req)
     return StreamingResponse(io.BytesIO(audio), media_type="audio/mpeg")
 
 
 @app.get("/voices")
-def list_voices():
-    return {"voices": list(VOICES.keys()), "default": DEFAULT_VOICE}
+def voices():
+    return {"voices": list(VOICES.keys())}
 
 
 @app.get("/")
@@ -68,7 +82,6 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
-    print("🎤 Узбекский TTS сервер запущен!")
+    print("🎤 Uzbek TTS сервер запущен!")
     print("📡 http://localhost:8000")
-    print(f"🎙️  Голоса: {', '.join(VOICES.keys())}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
