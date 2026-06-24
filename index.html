@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🎙️ Uzbek TTS — Ovoz Namunalari</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 700px;
+      width: 100%;
+      color: #fff;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 6px;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      color: rgba(255,255,255,0.5);
+      font-size: 0.9rem;
+      margin-bottom: 32px;
+    }
+
+    .model-badge {
+      display: inline-block;
+      background: rgba(233,69,96,0.2);
+      border: 1px solid rgba(233,69,96,0.4);
+      color: #e94560;
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 20px 22px;
+      margin-bottom: 16px;
+      transition: all 0.2s;
+    }
+
+    .card:hover {
+      background: rgba(255,255,255,0.11);
+      transform: translateY(-2px);
+    }
+
+    .card-num {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.35);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .card-text {
+      font-size: 1.05rem;
+      color: #fff;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+
+    .player-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .play-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #e94560, #f5a623);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+
+    .play-btn:hover { transform: scale(1.1); }
+    .play-btn:active { transform: scale(0.95); }
+    .play-btn svg { width: 16px; height: 16px; fill: #fff; }
+
+    .progress-wrap {
+      flex: 1;
+      height: 6px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 3px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #e94560, #f5a623);
+      width: 0%;
+      border-radius: 3px;
+      transition: width 0.1s linear;
+    }
+
+    .duration {
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.4);
+      min-width: 38px;
+      text-align: right;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      margin: 28px 0;
+    }
+
+    .generate-section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 14px;
+      color: rgba(255,255,255,0.85);
+    }
+
+    textarea {
+      width: 100%;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      padding: 14px;
+      color: #fff;
+      font-size: 0.95rem;
+      resize: vertical;
+      min-height: 80px;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    textarea::placeholder { color: rgba(255,255,255,0.3); }
+    textarea:focus { border-color: rgba(233,69,96,0.5); }
+
+    .gen-btn {
+      margin-top: 12px;
+      width: 100%;
+      padding: 13px;
+      background: linear-gradient(135deg, #e94560, #f5a623);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+    }
+
+    .gen-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    .api-note {
+      margin-top: 10px;
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.35);
+      text-align: center;
+    }
+
+    .footer {
+      margin-top: 28px;
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.25);
+      text-align: center;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: #4ade80;
+      margin-bottom: 20px;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      background: #4ade80;
+      border-radius: 50%;
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>🎙️ Uzbek TTS Demo</h1>
+  <p class="subtitle">O'zbek tili uchun sun'iy intellekt ovozi</p>
+  <div class="model-badge">MMS-TTS · VITS Fine-tuned · Кириллица</div>
+
+  <div class="status">
+    <div class="dot"></div>
+    Tayyor — namunalarni tinglang
+  </div>
+
+  <div id="samples">
+    <!-- Карточки с аудио сэмплами -->
+  </div>
+
+  <hr class="divider"/>
+
+  <div class="generate-section">
+    <h2>✍️ Ўз матнингизни синаб кўринг</h2>
+    <textarea id="customText" placeholder="Матн ёзинг (кириллица)...">Ўзбекистон — гўзал ва тарихий юрт.</textarea>
+    <button class="gen-btn" onclick="generateCustom()">
+      🚀 Генерация (API орқали)
+    </button>
+    <p class="api-note">⚙️ Бунинг учун сервер ишга тушган бўлиши керак: <code>python server.py</code></p>
+    <div id="customPlayer" style="margin-top:14px;"></div>
+  </div>
+
+  <p class="footer">
+    Модель: MuzaffarSharofitdinov/mms-tts-uzbek-girl-voice_cyrillic · HuggingFace
+  </p>
+</div>
+
+<script>
+  // Тестовые аудио файлы (генерируются через generate_audio.py)
+  const samples = [
+    { text: "Салом! Мен сунъий интеллект ёрдамида яратилган овозман.", file: "audio_samples/sample_1.wav" },
+    { text: "Бугун об-ҳаво жуда яхши, осмон очиқ.", file: "audio_samples/sample_2.wav" },
+    { text: "Хуш келибсиз! Биз сизга ёрдам беришга тайёрмиз.", file: "audio_samples/sample_3.wav" },
+    { text: "Ўзбекистон — гўзал ва тарихий юрт.", file: "audio_samples/sample_4.wav" },
+    { text: "Саломатликни асранг ва бахтли бўлинг!", file: "audio_samples/sample_5.wav" },
+  ];
+
+  const audios = {};
+
+  function buildSamples() {
+    const container = document.getElementById('samples');
+    samples.forEach((s, i) => {
+      const id = `audio_${i}`;
+      const audio = new Audio(s.file);
+      audios[id] = audio;
+
+      audio.addEventListener('timeupdate', () => {
+        const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+        const bar = document.getElementById(`bar_${i}`);
+        const dur = document.getElementById(`dur_${i}`);
+        if (bar) bar.style.width = pct + '%';
+        if (dur) {
+          const rem = audio.duration - audio.currentTime;
+          dur.textContent = isNaN(rem) ? '0:00' : formatTime(rem);
+        }
+      });
+
+      audio.addEventListener('ended', () => {
+        const btn = document.getElementById(`btn_${i}`);
+        if (btn) btn.innerHTML = playIcon();
+        const bar = document.getElementById(`bar_${i}`);
+        if (bar) bar.style.width = '0%';
+      });
+
+      container.innerHTML += `
+        <div class="card">
+          <div class="card-num">Намуна ${i + 1}</div>
+          <div class="card-text">${s.text}</div>
+          <div class="player-row">
+            <button class="play-btn" id="btn_${i}" onclick="togglePlay(${i})">${playIcon()}</button>
+            <div class="progress-wrap" onclick="seek(event, ${i})">
+              <div class="progress-bar" id="bar_${i}"></div>
+            </div>
+            <span class="duration" id="dur_${i}">—</span>
+          </div>
+        </div>`;
+    });
+  }
+
+  function playIcon() {
+    return `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+  }
+  function pauseIcon() {
+    return `<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+  }
+
+  function togglePlay(i) {
+    const id = `audio_${i}`;
+    const audio = audios[id];
+    const btn = document.getElementById(`btn_${i}`);
+
+    // Останавливаем все остальные
+    Object.keys(audios).forEach(k => {
+      if (k !== id && !audios[k].paused) {
+        audios[k].pause();
+        const idx = parseInt(k.split('_')[1]);
+        const b = document.getElementById(`btn_${idx}`);
+        if (b) b.innerHTML = playIcon();
+      }
+    });
+
+    if (audio.paused) {
+      audio.play();
+      btn.innerHTML = pauseIcon();
+    } else {
+      audio.pause();
+      btn.innerHTML = playIcon();
+    }
+  }
+
+  function seek(e, i) {
+    const audio = audios[`audio_${i}`];
+    if (!audio.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    audio.currentTime = pct * audio.duration;
+  }
+
+  function formatTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  async function generateCustom() {
+    const text = document.getElementById('customText').value.trim();
+    if (!text) return;
+
+    const player = document.getElementById('customPlayer');
+    player.innerHTML = '<p style="color:rgba(255,255,255,0.5);font-size:0.9rem">⏳ Генерация...</p>';
+
+    try {
+      const res = await fetch('http://localhost:8000/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+
+      if (!res.ok) throw new Error('Server error');
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      player.innerHTML = `
+        <audio controls style="width:100%;margin-top:8px;border-radius:8px;">
+          <source src="${url}" type="audio/wav">
+        </audio>`;
+    } catch (e) {
+      player.innerHTML = `<p style="color:#e94560;font-size:0.85rem">
+        ❌ Сервер топилмади. Аввал: <code>python server.py</code> ни ишга туширинг.
+      </p>`;
+    }
+  }
+
+  buildSamples();
+</script>
+</body>
+</html>
