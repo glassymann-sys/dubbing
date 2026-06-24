@@ -5,28 +5,47 @@ Uzbek TTS — тестовая генерация аудио
 Запуск:
     pip install transformers torch scipy
     python generate_audio.py
+
+Поддерживает: Mac M1/M2 (MPS), NVIDIA (CUDA), CPU
 """
 
 import os
-import sys
+import json
 import numpy as np
 import scipy.io.wavfile as wavfile
+import torch
+from transformers import VitsModel, AutoTokenizer
+
+
+def get_device():
+    if torch.backends.mps.is_available():
+        print("🍎 Apple M1/M2 — используется MPS (Neural Engine)")
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        print("⚡ NVIDIA GPU — используется CUDA")
+        return torch.device("cuda")
+    else:
+        print("💻 GPU не найден — используется CPU")
+        return torch.device("cpu")
+
+
+# Загружаем модель один раз
+MODEL_ID = "MuzaffarSharofitdinov/mms-tts-uzbek-girl-voice_cyrillic"
+DEVICE = get_device()
+
+print(f"⏳ Загружаю модель (первый раз ~150MB, потом кэш)...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+model = VitsModel.from_pretrained(MODEL_ID).to(DEVICE)
+model.eval()
+SAMPLE_RATE = model.config.sampling_rate
+print(f"✅ Модель загружена! Устройство: {DEVICE}\n")
 
 
 def generate(text: str, output_path: str):
-    from transformers import VitsModel, AutoTokenizer
-    import torch
-
-    model_id = "MuzaffarSharofitdinov/mms-tts-uzbek-girl-voice_cyrillic"
-
-    print(f"⏳ Загружаю модель (первый раз ~500MB, потом кэш)...")
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = VitsModel.from_pretrained(model_id)
-    model.eval()
-    print("✅ Модель загружена!")
-
     print(f"🎙️  Текст: {text}")
+
     inputs = tokenizer(text, return_tensors="pt")
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
 
     with torch.no_grad():
         output = model(**inputs).waveform
@@ -35,16 +54,13 @@ def generate(text: str, output_path: str):
     waveform = waveform / (np.max(np.abs(waveform)) + 1e-8)
     waveform_int16 = (waveform * 32767).astype(np.int16)
 
-    sr = model.config.sampling_rate
-    wavfile.write(output_path, sr, waveform_int16)
+    wavfile.write(output_path, SAMPLE_RATE, waveform_int16)
 
-    duration = len(waveform_int16) / sr
+    duration = len(waveform_int16) / SAMPLE_RATE
     print(f"✅ Сохранено: {output_path}  ({duration:.2f} сек)")
-    return sr
 
 
 if __name__ == "__main__":
-    # Тестовые фразы на узбекском (кириллица)
     samples = [
         "Салом! Мен сунъий интеллект ёрдамида яратилган овозман.",
         "Бугун об-ҳаво жуда яхши, осмон очиқ.",
@@ -58,19 +74,18 @@ if __name__ == "__main__":
 
     for i, text in enumerate(samples, 1):
         out = f"audio_samples/sample_{i}.wav"
-        print(f"\n[{i}/{len(samples)}]")
+        print(f"[{i}/{len(samples)}]")
         generate(text, out)
         results.append({"text": text, "file": out})
+        print()
 
-    print("\n" + "=" * 55)
+    print("=" * 55)
     print("🎉 Готово! Все аудио файлы сгенерированы:")
     for r in results:
         print(f"  📁 {r['file']}")
     print("\n👉 Открой  index.html  в браузере чтобы послушать!")
     print("=" * 55)
 
-    # Автоматически обновляем index.html с реальными файлами
-    import json
     with open("audio_data.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print("📄 audio_data.json обновлён для веб-плеера.")
