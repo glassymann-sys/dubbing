@@ -111,13 +111,14 @@ def transcribe(audio_path: str, language: str = None) -> list:
 # ─────────────────────────────────────────────
 
 def detect_gender(segments: list, groq_api_key: str) -> list:
-    """Определяет пол спикера для каждого сегмента"""
-    print("👥 Определяю пол спикеров...")
+    """
+    Определяет пол спикера для КАЖДОГО сегмента отдельно.
+    Если в видео мужчина и женщина — каждый получит свой голос.
+    """
+    print("👥 Определяю пол каждого спикера...")
     client = Groq(api_key=groq_api_key)
 
-    # Берём первые 10 сегментов для анализа
-    sample = segments[:10]
-    text = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(sample)])
+    text = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
 
     try:
         r = client.chat.completions.create(
@@ -125,11 +126,22 @@ def detect_gender(segments: list, groq_api_key: str) -> list:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a gender detection expert. Analyze text and detect speaker gender. Reply ONLY with JSON."
+                    "content": """You are an expert at detecting speaker gender from text context.
+Analyze each numbered segment and determine if the speaker is male or female.
+Look for:
+- Pronouns (I, me, he, she, his, her, я, мне, он, она)
+- Names mentioned
+- Context clues (e.g. "as a mother", "as a father")
+- Speaking style differences
+
+Reply ONLY with valid JSON like this:
+{"segments": [{"index": 1, "gender": "male"}, {"index": 2, "gender": "female"}]}
+
+If you cannot determine gender for a segment, use "male" as default."""
                 },
                 {
                     "role": "user",
-                    "content": f"{GENDER_PROMPT}{text}"
+                    "content": f"Detect gender for each speaker segment:\n{text}"
                 }
             ],
             response_format={"type": "json_object"}
@@ -141,17 +153,15 @@ def detect_gender(segments: list, groq_api_key: str) -> list:
             for item in data.get("segments", [])
         }
 
-        # Определяем общий пол (большинство)
-        genders = list(gender_map.values())
-        dominant = "male" if genders.count("male") >= genders.count("female") else "female"
-        print(f"  Определён пол: {dominant} ({'👨' if dominant == 'male' else '👩'})")
-
-        # Применяем к ВСЕМ сегментам
-        for seg in segments:
-            seg["gender"] = dominant
+        # Применяем к каждому сегменту отдельно
+        for i, seg in enumerate(segments):
+            gender = gender_map.get(i + 1, "male")
+            seg["gender"] = gender
+            icon = "👩" if gender == "female" else "👨"
+            print(f"  {icon} [{seg['start']:.1f}s] {seg['text'][:40]}")
 
     except Exception as e:
-        print(f"  ⚠️ Не удалось определить пол: {e} — используем male")
+        print(f"  ⚠️ Ошибка определения пола: {e} — используем male")
         for seg in segments:
             seg["gender"] = "male"
 
