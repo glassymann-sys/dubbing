@@ -30,18 +30,8 @@ VOICES = {
 
 
 def build_ssml(text: str, voice: str, rate: str, pitch: str, style: str, styledegree: float) -> str:
-    return f"""<speak version="1.0"
-  xmlns="http://www.w3.org/2001/10/synthesis"
-  xmlns:mstts="https://www.w3.org/2001/mstts"
-  xml:lang="uz-UZ">
-  <voice name="{voice}">
-    <mstts:express-as style="{style}" styledegree="{styledegree}">
-      <prosody rate="{rate}" pitch="{pitch}">
-        {text}
-      </prosody>
-    </mstts:express-as>
-  </voice>
-</speak>"""
+    # Простой текст без SSML — надёжнее всего
+    return text
 
 
 class TTSRequest(BaseModel):
@@ -54,11 +44,15 @@ class TTSRequest(BaseModel):
 
 
 async def synth(req: TTSRequest) -> bytes:
-    voice        = VOICES.get(req.voice, VOICES["madina"])
-    clean_text   = normalize(req.text)          # 🔤 нормализация текста
-    ssml         = build_ssml(clean_text, voice, req.rate, req.pitch, req.style, req.styledegree)
-    buf   = io.BytesIO()
-    communicate = edge_tts.Communicate(text=ssml, voice=voice)
+    voice      = VOICES.get(req.voice, VOICES["madina"])
+    clean_text = normalize(req.text)
+    buf        = io.BytesIO()
+    communicate = edge_tts.Communicate(
+        text=clean_text,
+        voice=voice,
+        rate=req.rate,
+        pitch=req.pitch,
+    )
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             buf.write(chunk["data"])
