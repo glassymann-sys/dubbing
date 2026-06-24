@@ -20,7 +20,7 @@ VOICE_FEMALE = "uz-UZ-MadinaNeural"
 VOICE_MALE   = "uz-UZ-SardorNeural"
 ORIG_VOLUME  = 0.12
 TTS_VOLUME   = 2.2
-TTS_RATE     = "-12%"
+TTS_RATE     = "-5%"   # чуть быстрее чем -12%
 
 # ─────────────────────────────────────────────
 # Промпт перевода
@@ -225,15 +225,74 @@ async def generate_tts_segment(seg: dict, out_path: str):
     await tts.save(out_path)
 
 
+def get_duration(path: str) -> float:
+    """Длительность аудио файла через ffprobe"""
+    r = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", path],
+        capture_output=True, text=True
+    )
+    try:
+        for s in json.loads(r.stdout).get("streams", []):
+            if "duration" in s:
+                return float(s["duration"])
+    except:
+        pass
+    return 1.0
+
+
+def fit_audio_to_duration(in_path: str, out_path: str, target_dur: float):
+    """
+    Подгоняет аудио под нужную длительность через atempo.
+    Если TTS длиннее оригинала — ускоряем чтобы вписаться.
+    Если короче — оставляем (пауза естественна).
+    """
+    tts_dur = get_duration(in_path)
+    if tts_dur <= 0:
+        os.rename(in_path, out_path)
+        return
+
+    ratio = tts_dur / target_dur
+
+    if ratio > 1.1:
+        # TTS длиннее оригинала → ускоряем но не более чем 1.8x
+        tempo = min(ratio, 1.8)
+        tempo = max(tempo, 0.8)
+        cmd = [
+            "ffmpeg", "-i", in_path,
+            "-filter:a", f"atempo={tempo:.3f}",
+            "-y", out_path
+        ]
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode == 0:
+            try: os.remove(in_path)
+            except: pass
+            return
+    # Оставляем как есть
+    try:
+        os.rename(in_path, out_path)
+    except:
+        pass
+
+
 async def generate_all_tts(segments: list, temp_dir: str) -> list:
-    print("🎤 Генерирую голос...")
+    print("🎤 Генерирую голос (синхронизирую по времени)...")
     result = []
     for i, seg in enumerate(segments):
-        out = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
-        await generate_tts_segment(seg, out)
+        raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.mp3")
+        out_path = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
+
+        # 1. Генерируем TTS
+        voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
+        text  = normalize(seg["translated"])
+        tts   = edge_tts.Communicate(text=text, voice=voice, rate=TTS_RATE)
+        await tts.save(raw_path)
+
+        # 2. Подгоняем под длину оригинального сегмента
+        fit_audio_to_duration(raw_path, out_path, seg["duration"])
+
         icon = "👩" if seg["gender"] == "female" else "👨"
         print(f"  [{i+1}/{len(segments)}] {icon} Spk{seg['speaker']}: {seg['translated'][:45]}")
-        result.append({**seg, "audio_file": out})
+        result.append({**seg, "audio_file": out_path})
     print("✅ TTS готов!")
     return result
 
