@@ -110,58 +110,73 @@ def transcribe(audio_path: str, language: str = None) -> list:
 # Шаг 2b: Определение пола спикера через Groq
 # ─────────────────────────────────────────────
 
-def detect_gender(segments: list, groq_api_key: str) -> list:
-    """
-    Определяет пол спикера для КАЖДОГО сегмента отдельно.
-    Если в видео мужчина и женщина — каждый получит свой голос.
-    """
-    print("👥 Определяю пол каждого спикера...")
-    client = Groq(api_key=groq_api_key)
+# ─────────────────────────────────────────────
+# Шаг 2b: Определение пола по АУДИО (не тексту)
+# ─────────────────────────────────────────────
 
-    text = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
+def detect_gender_by_audio(segments: list, audio_path: str) -> list:
+    """
+    Определяет пол спикера по частоте голоса (pitch).
+    Мужской голос: 85-180 Hz
+    Женский голос: 165-255 Hz
+    """
+    print("👥 Определяю пол по голосу (аудио анализ)...")
 
     try:
-        r = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """You are an expert at detecting speaker gender from text context.
-Analyze each numbered segment and determine if the speaker is male or female.
-Look for:
-- Pronouns (I, me, he, she, his, her, я, мне, он, она)
-- Names mentioned
-- Context clues (e.g. "as a mother", "as a father")
-- Speaking style differences
+        import numpy as np
+        import wave
+        import struct
 
-Reply ONLY with valid JSON like this:
-{"segments": [{"index": 1, "gender": "male"}, {"index": 2, "gender": "female"}]}
+        # Читаем WAV файл
+        with wave.open(audio_path, 'rb') as wf:
+            n_channels = wf.getnchannels()
+            sampwidth  = wf.getsampwidth()
+            framerate  = wf.getframerate()
+            n_frames   = wf.getnframes()
+            raw_data   = wf.readframes(n_frames)
 
-If you cannot determine gender for a segment, use "male" as default."""
-                },
-                {
-                    "role": "user",
-                    "content": f"Detect gender for each speaker segment:\n{text}"
-                }
-            ],
-            response_format={"type": "json_object"}
-        )
+        # Конвертируем в numpy array
+        if sampwidth == 2:
+            audio_data = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32)
+        else:
+            audio_data = np.frombuffer(raw_data, dtype=np.uint8).astype(np.float32) - 128
 
-        data = json.loads(r.choices[0].message.content)
-        gender_map = {
-            item["index"]: item["gender"]
-            for item in data.get("segments", [])
-        }
+        if n_channels > 1:
+            audio_data = audio_data[::n_channels]
 
-        # Применяем к каждому сегменту отдельно
-        for i, seg in enumerate(segments):
-            gender = gender_map.get(i + 1, "male")
+        # Для каждого сегмента определяем среднюю частоту
+        for seg in segments:
+            start_sample = int(seg["start"] * framerate)
+            end_sample   = int(seg["end"]   * framerate)
+            chunk = audio_data[start_sample:end_sample]
+
+            if len(chunk) < 100:
+                seg["gender"] = "male"
+                continue
+
+            # FFT для определения доминантной частоты
+            fft = np.abs(np.fft.rfft(chunk))
+            freqs = np.fft.rfftfreq(len(chunk), 1.0 / framerate)
+
+            # Ищем пик в диапазоне голоса 80-300 Hz
+            voice_mask = (freqs >= 80) & (freqs <= 300)
+            if not np.any(voice_mask):
+                seg["gender"] = "male"
+                continue
+
+            voice_fft   = fft[voice_mask]
+            voice_freqs = freqs[voice_mask]
+            peak_freq   = voice_freqs[np.argmax(voice_fft)]
+
+            # Женский голос выше 160 Hz
+            gender = "female" if peak_freq > 160 else "male"
             seg["gender"] = gender
             icon = "👩" if gender == "female" else "👨"
-            print(f"  {icon} [{seg['start']:.1f}s] {seg['text'][:40]}")
+            print(f"  {icon} [{seg['start']:.1f}s] {peak_freq:.0f}Hz → {gender} — {seg['text'][:35]}")
 
     except Exception as e:
-        print(f"  ⚠️ Ошибка определения пола: {e} — используем male")
+        print(f"  ⚠️ Аудио анализ не удался: {e}")
+        # Фолбэк: определяем по тексту через Groq
         for seg in segments:
             seg["gender"] = "male"
 
@@ -338,8 +353,8 @@ async def dub_video(
         if not segments:
             raise Exception("Речь не найдена в видео")
 
-        # 2b. Определение пола
-        segments = detect_gender(segments, groq_api_key)
+        # 2b. Определение пола по аудио
+        segments = detect_gender_by_audio(segments, audio_path)
 
         # 3. Перевод
         print("\n🌐 Шаг 3/5: Перевожу на узбекский...")
