@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>🎙️ Uzbek TTS Studio</title>
+  <title>🎬 Uzbek AI Dubbing</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
-      font-family: 'Segoe UI', Tahoma, sans-serif;
+      font-family: 'Segoe UI', sans-serif;
       background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
       min-height: 100vh;
       display: flex;
@@ -16,331 +15,393 @@
       justify-content: center;
       padding: 24px;
     }
-
     .container {
       background: rgba(255,255,255,0.06);
       backdrop-filter: blur(16px);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 24px;
       padding: 40px;
-      max-width: 740px;
+      max-width: 760px;
       width: 100%;
       color: #fff;
     }
-
     h1 {
-      font-size: 1.9rem;
-      margin-bottom: 6px;
+      font-size: 2rem;
       background: linear-gradient(90deg, #a78bfa, #60a5fa);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
     }
-
-    .subtitle { color: rgba(255,255,255,0.45); font-size: 0.88rem; margin-bottom: 10px; }
-
-    .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 28px; }
-    .badge { font-size: 0.72rem; padding: 3px 11px; border-radius: 20px; font-weight: 600; }
-    .badge-ms   { background: rgba(96,165,250,0.15); border: 1px solid rgba(96,165,250,0.35); color: #60a5fa; }
-    .badge-ssml { background: rgba(167,139,250,0.15); border: 1px solid rgba(167,139,250,0.35); color: #a78bfa; }
-    .badge-free { background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.35); color: #34d399; }
-
-    /* голоса */
-    .voice-row { display: flex; gap: 10px; margin-bottom: 24px; }
-    .voice-btn {
-      flex: 1; padding: 12px; border-radius: 12px;
-      border: 1.5px solid rgba(255,255,255,0.12);
-      background: rgba(255,255,255,0.05);
-      color: rgba(255,255,255,0.55);
-      cursor: pointer; font-size: 0.88rem;
-      transition: all 0.2s; text-align: center;
+    .subtitle { color: rgba(255,255,255,0.4); font-size: 0.9rem; margin-bottom: 28px; }
+    .section { margin-bottom: 24px; }
+    label {
+      display: block;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.45);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 7px;
     }
-    .voice-btn.active { border-color: #a78bfa; background: rgba(167,139,250,0.15); color: #fff; }
-    .voice-btn:hover  { background: rgba(255,255,255,0.09); }
-
-    /* карточки */
-    .card {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 14px; padding: 18px 20px;
-      margin-bottom: 14px; transition: all 0.2s;
-    }
-    .card:hover { background: rgba(255,255,255,0.09); transform: translateY(-1px); }
-    .card-num  { font-size: 0.68rem; color: rgba(255,255,255,0.3); margin-bottom: 5px; letter-spacing: 1px; text-transform: uppercase; }
-    .card-text { font-size: 1rem; color: #fff; margin-bottom: 14px; line-height: 1.55; }
-    .player-row { display: flex; align-items: center; gap: 10px; }
-
-    .play-btn {
-      width: 40px; height: 40px; border-radius: 50%;
-      background: linear-gradient(135deg, #a78bfa, #60a5fa);
-      border: none; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0; transition: transform 0.15s;
-    }
-    .play-btn:hover  { transform: scale(1.1); }
-    .play-btn:active { transform: scale(0.93); }
-    .play-btn svg { width: 15px; height: 15px; fill: #fff; }
-
-    .progress-wrap { flex: 1; height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; cursor: pointer; }
-    .progress-bar  { height: 100%; background: linear-gradient(90deg, #a78bfa, #60a5fa); width: 0%; transition: width 0.1s linear; }
-    .duration      { font-size: 0.75rem; color: rgba(255,255,255,0.35); min-width: 36px; text-align: right; }
-
-    .divider { border: none; border-top: 1px solid rgba(255,255,255,0.07); margin: 28px 0; }
-
-    /* генератор */
-    .gen-section h2 { font-size: 1.05rem; margin-bottom: 14px; color: rgba(255,255,255,0.8); }
-
-    .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-
-    label.ctrl-label {
-      display: block; font-size: 0.7rem;
-      color: rgba(255,255,255,0.4);
-      margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;
-    }
-
-    select {
+    input[type=text], input[type=password], select {
       width: 100%;
       background: rgba(255,255,255,0.07);
       border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px; padding: 8px 10px;
-      color: #fff; font-size: 0.85rem; outline: none;
+      border-radius: 10px;
+      padding: 11px 14px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
     }
+    input:focus, select:focus { border-color: rgba(167,139,250,0.5); }
     select option { background: #302b63; }
-
+    .drop-zone {
+      border: 2px dashed rgba(167,139,250,0.35);
+      border-radius: 14px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: #a78bfa;
+      background: rgba(167,139,250,0.08);
+    }
+    .drop-zone .icon { font-size: 2.5rem; margin-bottom: 10px; }
+    .drop-zone p { color: rgba(255,255,255,0.5); font-size: 0.9rem; }
+    .drop-zone .file-name { color: #a78bfa; margin-top: 8px; font-size: 0.85rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .btn {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      border: none;
+      border-radius: 12px;
+      color: #fff;
+      font-size: 1.05rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+      margin-top: 8px;
+    }
+    .btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+    .progress-box {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 20px;
+      display: none;
+    }
+    .progress-title { font-size: 1rem; margin-bottom: 14px; }
+    .steps { display: flex; flex-direction: column; gap: 10px; }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.88rem;
+      color: rgba(255,255,255,0.4);
+      transition: color 0.3s;
+    }
+    .step.active { color: #a78bfa; }
+    .step.done   { color: #34d399; }
+    .step-icon { font-size: 1.2rem; width: 24px; text-align: center; }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(167,139,250,0.3);
+      border-top-color: #a78bfa;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .result-box {
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.2);
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 20px;
+      display: none;
+    }
+    .result-box h3 { color: #34d399; margin-bottom: 16px; }
+    video { width: 100%; border-radius: 10px; margin-bottom: 14px; }
+    .dl-btn {
+      display: inline-block;
+      padding: 11px 28px;
+      background: linear-gradient(135deg, #34d399, #10b981);
+      border-radius: 10px;
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
+      font-size: 0.95rem;
+      transition: opacity 0.2s;
+    }
+    .dl-btn:hover { opacity: 0.85; }
+    .error-box {
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 12px;
+      padding: 16px;
+      color: #f87171;
+      margin-top: 16px;
+      display: none;
+      font-size: 0.88rem;
+    }
+    code { background: rgba(255,255,255,0.1); padding: 2px 7px; border-radius: 4px; font-size: 0.8rem; }
+    .divider { border: none; border-top: 1px solid rgba(255,255,255,0.07); margin: 28px 0; }
+    .tts-section h2 { font-size: 1rem; margin-bottom: 14px; color: rgba(255,255,255,0.7); }
     textarea {
       width: 100%;
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 12px; padding: 14px;
-      color: #fff; font-size: 0.95rem;
-      resize: vertical; min-height: 90px;
-      outline: none; font-family: inherit;
-      transition: border-color 0.2s;
+      border-radius: 10px;
+      padding: 12px;
+      color: #fff;
+      font-size: 0.9rem;
+      resize: vertical;
+      min-height: 70px;
+      outline: none;
+      font-family: inherit;
     }
-    textarea::placeholder { color: rgba(255,255,255,0.25); }
     textarea:focus { border-color: rgba(167,139,250,0.5); }
-
-    .gen-btn {
-      margin-top: 12px; width: 100%; padding: 14px;
-      background: linear-gradient(135deg, #a78bfa, #60a5fa);
-      border: none; border-radius: 12px;
-      color: #fff; font-size: 1rem; font-weight: 600;
-      cursor: pointer; transition: opacity 0.2s, transform 0.15s;
+    .tts-btn {
+      margin-top: 10px;
+      width: 100%;
+      padding: 12px;
+      background: rgba(167,139,250,0.2);
+      border: 1px solid rgba(167,139,250,0.35);
+      border-radius: 10px;
+      color: #a78bfa;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
     }
-    .gen-btn:hover    { opacity: 0.88; transform: translateY(-1px); }
-    .gen-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-
-    .api-note { margin-top: 8px; font-size: 0.75rem; color: rgba(255,255,255,0.3); text-align: center; }
-
-    .status-msg { font-size: 0.85rem; padding: 10px 14px; border-radius: 10px; margin-top: 10px; }
-    .status-ok      { background: rgba(52,211,153,0.1);  color: #34d399; border: 1px solid rgba(52,211,153,0.2); }
-    .status-err     { background: rgba(239,68,68,0.1);   color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
-    .status-loading { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.2); }
-
-    #customPlayer audio { width: 100%; border-radius: 10px; margin-top: 10px; }
-    .footer { margin-top: 28px; font-size: 0.72rem; color: rgba(255,255,255,0.2); text-align: center; }
-
-    code { background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 4px; font-size: 0.8rem; }
+    .tts-btn:hover { background: rgba(167,139,250,0.3); }
   </style>
 </head>
 <body>
 <div class="container">
+  <h1>🎬 Uzbek AI Dubbing</h1>
+  <p class="subtitle">Video → Whisper → Tarjima → O'zbek ovozi</p>
 
-  <h1>🎙️ Uzbek TTS Studio</h1>
-  <p class="subtitle">Microsoft Neural Voice + SSML — Jonli o'zbek ovozi</p>
-
-  <div class="badge-row">
-    <span class="badge badge-ms">Microsoft Neural</span>
-    <span class="badge badge-ssml">SSML Emotions</span>
-    <span class="badge badge-free">Bepul</span>
+  <!-- API KEY -->
+  <div class="section">
+    <label>🔑 Groq API Key</label>
+    <input type="password" id="groqKey" placeholder="gsk_..." />
   </div>
 
-  <!-- Выбор голоса -->
-  <div class="voice-row">
-    <div class="voice-btn active" onclick="setVoice('madina', this)">
-      👩 <strong>Madina</strong><br>
-      <small style="opacity:.5">Ayol · uz-UZ-MadinaNeural</small>
+  <!-- ЗАГРУЗКА ВИДЕО -->
+  <div class="section">
+    <label>🎬 Video yuklang (10–60 sekund, MP4/MOV)</label>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div class="icon">📹</div>
+      <p>Video faylni shu yerga tashlang yoki bosing</p>
+      <p class="file-name" id="fileName">Fayl tanlanmagan</p>
     </div>
-    <div class="voice-btn" onclick="setVoice('sardor', this)">
-      👨 <strong>Sardor</strong><br>
-      <small style="opacity:.5">Erkak · uz-UZ-SardorNeural</small>
+    <input type="file" id="fileInput" accept="video/*" style="display:none" onchange="onFileSelect(event)"/>
+  </div>
+
+  <!-- НАСТРОЙКИ -->
+  <div class="grid-2">
+    <div>
+      <label>🎙️ Ovoz</label>
+      <select id="voiceSelect">
+        <option value="madina">👩 Madina (Ayol)</option>
+        <option value="sardor">👨 Sardor (Erkak)</option>
+      </select>
+    </div>
+    <div>
+      <label>🌍 Asl til</label>
+      <select id="langSelect">
+        <option value="auto">🤖 Avtomatik</option>
+        <option value="en">🇺🇸 Inglizcha</option>
+        <option value="ru">🇷🇺 Ruscha</option>
+      </select>
     </div>
   </div>
 
-  <div id="samples"></div>
+  <button class="btn" id="dubBtn" onclick="startDubbing()">
+    🚀 Dublyaj qilish
+  </button>
+
+  <!-- ПРОГРЕСС -->
+  <div class="progress-box" id="progressBox">
+    <div class="progress-title">⏳ <span id="progressMsg">Ishlanmoqda...</span></div>
+    <div class="steps">
+      <div class="step" id="step1"><div class="step-icon">📢</div> Audio ajratilmoqda...</div>
+      <div class="step" id="step2"><div class="step-icon">📝</div> Nutq tanib olinmoqda (Whisper)...</div>
+      <div class="step" id="step3"><div class="step-icon">🌐</div> O'zbek tiliga tarjima qilinmoqda...</div>
+      <div class="step" id="step4"><div class="step-icon">🎤</div> Ovoz yaratilmoqda (TTS)...</div>
+      <div class="step" id="step5"><div class="step-icon">🎬</div> Video yig'ilmoqda...</div>
+    </div>
+  </div>
+
+  <!-- ОШИБКА -->
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- РЕЗУЛЬТАТ -->
+  <div class="result-box" id="resultBox">
+    <h3>🎉 Tayyor!</h3>
+    <video id="resultVideo" controls></video>
+    <br>
+    <a class="dl-btn" id="downloadBtn" href="#" download>⬇️ Yuklab olish</a>
+  </div>
 
   <hr class="divider"/>
 
-  <div class="gen-section">
-    <h2>✍️ O'z matningizni sinab ko'ring</h2>
-
-    <div class="controls-grid">
-      <div>
-        <label class="ctrl-label">Tezlik / Скорость</label>
-        <select id="rateSelect">
-          <option value="-20%">🐢 Juda sekin (-20%)</option>
-          <option value="-10%">🚶 Sekin (-10%)</option>
-          <option value="-8%" selected>✅ Tavsiya (-8%)</option>
-          <option value="0%">▶️ Normal</option>
-          <option value="+10%">🏃 Tez (+10%)</option>
-        </select>
-      </div>
-      <div>
-        <label class="ctrl-label">Ovoz balandligi / Высота</label>
-        <select id="pitchSelect">
-          <option value="-5Hz">⬇️ Past (-5Hz)</option>
-          <option value="+1Hz" selected>✅ Normal (+1Hz)</option>
-          <option value="+5Hz">⬆️ Baland (+5Hz)</option>
-          <option value="+10Hz">⬆️⬆️ Yuqori (+10Hz)</option>
-        </select>
-      </div>
-      <div>
-        <label class="ctrl-label">Uslub / Стиль</label>
-        <select id="styleSelect">
-          <option value="friendly" selected>😊 Friendly (do'stona)</option>
-          <option value="cheerful">🎉 Cheerful (quvnoq)</option>
-          <option value="newscast">📰 Newscast (diktor)</option>
-          <option value="customerservice">🤝 Professional</option>
-        </select>
-      </div>
-      <div>
-        <label class="ctrl-label">Emotsiya kuchi / Сила эмоций</label>
-        <select id="degreeSelect">
-          <option value="1.0">😐 O'rtacha (1.0)</option>
-          <option value="1.5" selected>😊 Kuchli (1.5)</option>
-          <option value="2.0">🔥 Juda kuchli (2.0)</option>
-        </select>
-      </div>
-    </div>
-
-    <textarea id="customText" placeholder="Matn yozing...">Xush kelibsiz! Biz sizga yordam berishga tayyormiz.</textarea>
-
-    <button class="gen-btn" id="genBtn" onclick="generateCustom()">
-      🚀 Ovoz yaratish
-    </button>
-    <p class="api-note">⚙️ Sever kerak: <code>python3 server.py</code></p>
-    <div id="customPlayer"></div>
+  <!-- TTS ТЕСТ -->
+  <div class="tts-section">
+    <h2>🎙️ Matn sinash (TTS)</h2>
+    <textarea id="ttsText" placeholder="O'zbek matnini yozing...">Salom, bugun havo juda zo'r!</textarea>
+    <button class="tts-btn" onclick="testTTS()">▶️ Tinglash</button>
+    <div id="ttsPlayer" style="margin-top:10px;"></div>
   </div>
-
-  <p class="footer">Microsoft Edge TTS · SSML · uz-UZ-MadinaNeural / uz-UZ-SardorNeural</p>
 </div>
 
 <script>
-  const samples = [
-    "Salom! Men sun'iy intellekt yordamida yaratilgan ovozman.",
-    "Bugun ob-havo juda yaxshi, osmon ochiq.",
-    "Xush kelibsiz! Biz sizga yordam berishga tayyormiz.",
-    "O'zbekiston — go'zal va tarixiy yurt.",
-    "Sog'liqni asrang va baxtli bo'ling!",
-  ];
+  let selectedFile = null;
+  let currentTaskId = null;
+  let pollInterval = null;
 
-  let currentVoice = "madina";
-  const audios = {};
+  // Drag & Drop
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+  });
 
-  function setVoice(v, el) {
-    currentVoice = v;
-    document.querySelectorAll('.voice-btn').forEach(b => b.classList.remove('active'));
-    el.classList.add('active');
+  function onFileSelect(e) { setFile(e.target.files[0]); }
+
+  function setFile(file) {
+    selectedFile = file;
+    document.getElementById('fileName').textContent = `✅ ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`;
   }
 
-  function playIcon()  { return `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`; }
-  function pauseIcon() { return `<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`; }
-  function fmtTime(s)  { return isNaN(s) ? '—' : `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`; }
-
-  function buildSamples() {
-    const c = document.getElementById('samples');
-    samples.forEach((text, i) => {
-      const audio = new Audio(`audio_samples/sample_${i+1}.mp3`);
-      audios[i] = audio;
-      audio.addEventListener('timeupdate', () => {
-        const pct = audio.duration ? audio.currentTime / audio.duration * 100 : 0;
-        const bar = document.getElementById(`bar_${i}`);
-        const dur = document.getElementById(`dur_${i}`);
-        if (bar) bar.style.width = pct + '%';
-        if (dur) dur.textContent = fmtTime(audio.duration - audio.currentTime);
-      });
-      audio.addEventListener('ended', () => {
-        const btn = document.getElementById(`btn_${i}`);
-        if (btn) btn.innerHTML = playIcon();
-        const bar = document.getElementById(`bar_${i}`);
-        if (bar) bar.style.width = '0%';
-      });
-
-      c.innerHTML += `
-        <div class="card">
-          <div class="card-num">Namuna ${i+1}</div>
-          <div class="card-text">${text}</div>
-          <div class="player-row">
-            <button class="play-btn" id="btn_${i}" onclick="togglePlay(${i})">${playIcon()}</button>
-            <div class="progress-wrap" onclick="seek(event,${i})">
-              <div class="progress-bar" id="bar_${i}"></div>
-            </div>
-            <span class="duration" id="dur_${i}">—</span>
-          </div>
-        </div>`;
-    });
-  }
-
-  function togglePlay(i) {
-    const audio = audios[i];
-    const btn = document.getElementById(`btn_${i}`);
-    Object.keys(audios).forEach(k => {
-      if (parseInt(k) !== i && !audios[k].paused) {
-        audios[k].pause();
-        const b = document.getElementById(`btn_${k}`);
-        if (b) b.innerHTML = playIcon();
-      }
-    });
-    if (audio.paused) { audio.play(); btn.innerHTML = pauseIcon(); }
-    else              { audio.pause(); btn.innerHTML = playIcon(); }
-  }
-
-  function seek(e, i) {
-    const audio = audios[i];
-    if (!audio.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
-  }
-
-  async function generateCustom() {
-    const text        = document.getElementById('customText').value.trim();
-    const rate        = document.getElementById('rateSelect').value;
-    const pitch       = document.getElementById('pitchSelect').value;
-    const style       = document.getElementById('styleSelect').value;
-    const styledegree = parseFloat(document.getElementById('degreeSelect').value);
-    if (!text) return;
-
-    const btn    = document.getElementById('genBtn');
-    const player = document.getElementById('customPlayer');
-
-    btn.disabled = true;
-    btn.textContent = '⏳ Yaratilmoqda...';
-    player.innerHTML = `<div class="status-msg status-loading">⏳ Ovoz yaratilmoqda...</div>`;
-
-    try {
-      const res = await fetch('http://localhost:8000/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: currentVoice, rate, pitch, style, styledegree })
-      });
-      if (!res.ok) throw new Error('err');
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      player.innerHTML = `
-        <div class="status-msg status-ok">✅ Tayyor!</div>
-        <audio controls autoplay>
-          <source src="${url}" type="audio/mpeg">
-        </audio>`;
-    } catch {
-      player.innerHTML = `<div class="status-msg status-err">
-        ❌ Server topilmadi. Terminailda: <code>python3 server.py</code>
-      </div>`;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🚀 Ovoz yaratish';
+  function setStep(n, state) {
+    const el = document.getElementById(`step${n}`);
+    if (!el) return;
+    el.className = `step ${state}`;
+    if (state === 'active') {
+      el.querySelector('.step-icon').innerHTML = '<div class="spinner"></div>';
+    } else if (state === 'done') {
+      el.querySelector('.step-icon').textContent = '✅';
     }
   }
 
-  buildSamples();
+  function showError(msg) {
+    const box = document.getElementById('errorBox');
+    box.style.display = 'block';
+    box.textContent = '❌ ' + msg;
+  }
+
+  async function startDubbing() {
+    const groqKey = document.getElementById('groqKey').value.trim();
+    const voice   = document.getElementById('voiceSelect').value;
+    const lang    = document.getElementById('langSelect').value;
+
+    if (!groqKey) { showError('Groq API kalitini kiriting!'); return; }
+    if (!selectedFile) { showError('Video faylni tanlang!'); return; }
+
+    // Сброс UI
+    document.getElementById('errorBox').style.display   = 'none';
+    document.getElementById('resultBox').style.display  = 'none';
+    document.getElementById('progressBox').style.display = 'block';
+    document.getElementById('dubBtn').disabled = true;
+    [1,2,3,4,5].forEach(n => setStep(n, ''));
+
+    setStep(1, 'active');
+    document.getElementById('progressMsg').textContent = 'Yuklanmoqda...';
+
+    // Отправляем файл
+    const formData = new FormData();
+    formData.append('video', selectedFile);
+    formData.append('voice', voice);
+    formData.append('language', lang);
+    formData.append('groq_key', groqKey);
+
+    try {
+      const res = await fetch('http://localhost:8000/dub', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      currentTaskId = data.task_id;
+
+      // Начинаем polling статуса
+      pollInterval = setInterval(pollStatus, 2000);
+    } catch(e) {
+      showError('Server topilmadi. Avval: python3 server.py');
+      document.getElementById('dubBtn').disabled = false;
+    }
+  }
+
+  let lastMsg = '';
+  async function pollStatus() {
+    if (!currentTaskId) return;
+    try {
+      const res  = await fetch(`http://localhost:8000/status/${currentTaskId}`);
+      const data = await res.json();
+
+      const msg = data.message || '';
+      if (msg !== lastMsg) {
+        lastMsg = msg;
+        document.getElementById('progressMsg').textContent = msg;
+        // Обновляем шаги по сообщению
+        if (msg.includes('аудио') || msg.includes('Извлека')) { setStep(1,'active'); }
+        if (msg.includes('Транскри') || msg.includes('Whisper')) { setStep(1,'done'); setStep(2,'active'); }
+        if (msg.includes('Перево')) { setStep(2,'done'); setStep(3,'active'); }
+        if (msg.includes('TTS') || msg.includes('голос')) { setStep(3,'done'); setStep(4,'active'); }
+        if (msg.includes('видео') || msg.includes('Собира')) { setStep(4,'done'); setStep(5,'active'); }
+      }
+
+      if (data.status === 'done') {
+        clearInterval(pollInterval);
+        [1,2,3,4,5].forEach(n => setStep(n,'done'));
+        showResult();
+      } else if (data.status === 'error') {
+        clearInterval(pollInterval);
+        showError(data.message);
+        document.getElementById('dubBtn').disabled = false;
+      }
+    } catch(e) {}
+  }
+
+  function showResult() {
+    document.getElementById('progressBox').style.display = 'none';
+    document.getElementById('resultBox').style.display   = 'block';
+    document.getElementById('dubBtn').disabled = false;
+
+    const videoEl = document.getElementById('resultVideo');
+    const dlBtn   = document.getElementById('downloadBtn');
+    const url = `http://localhost:8000/download/${currentTaskId}`;
+    videoEl.src = url;
+    dlBtn.href  = url;
+  }
+
+  async function testTTS() {
+    const text  = document.getElementById('ttsText').value.trim();
+    const voice = document.getElementById('voiceSelect').value;
+    if (!text) return;
+    const player = document.getElementById('ttsPlayer');
+    player.innerHTML = '<p style="color:rgba(255,255,255,0.4);font-size:0.85rem">⏳ Yaratilmoqda...</p>';
+    try {
+      const res  = await fetch('http://localhost:8000/tts', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({text, voice})
+      });
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      player.innerHTML = `<audio controls autoplay style="width:100%;border-radius:8px;margin-top:6px"><source src="${url}" type="audio/mpeg"></audio>`;
+    } catch {
+      player.innerHTML = '<p style="color:#f87171;font-size:0.85rem">❌ Server topilmadi</p>';
+    }
+  }
 </script>
 </body>
 </html>

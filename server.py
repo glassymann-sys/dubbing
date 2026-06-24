@@ -1,20 +1,28 @@
+# -*- coding: utf-8 -*-
 """
-Uzbek TTS — FastAPI + Edge TTS + SSML
-Голос: uz-UZ-MadinaNeural / uz-UZ-SardorNeural
+Uzbek AI Dubbing Server
+FastAPI сервер: TTS + видео дублирование
 
 Запуск: python3 server.py → http://localhost:8000
 """
 
 import asyncio
 import io
-import edge_tts
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from text_normalizer import normalize
+import os
+import uuid
+from pathlib import Path
 
-app = FastAPI(title="Uzbek TTS API")
+import edge_tts
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from text_normalizer import normalize
+from dubber import dub_video, VOICE_FEMALE, VOICE_MALE
+
+app = FastAPI(title="Uzbek AI Dubbing")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,28 +31,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Папки
+UPLOAD_DIR = Path("uploads")
+OUTPUT_DIR = Path("outputs")
+UPLOAD_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Хранилище статусов задач
+tasks: dict = {}
+
 VOICES = {
-    "madina": "uz-UZ-MadinaNeural",
-    "sardor": "uz-UZ-SardorNeural",
+    "madina": VOICE_FEMALE,
+    "sardor": VOICE_MALE,
 }
 
 
-def build_ssml(text: str, voice: str, rate: str, pitch: str, style: str, styledegree: float) -> str:
-    # Простой текст без SSML — надёжнее всего
-    return text
-
+# ─────────────────────────────────────────────
+# TTS endpoint (как раньше)
+# ─────────────────────────────────────────────
 
 class TTSRequest(BaseModel):
     text: str
     voice: str = "madina"
     rate: str = "-8%"
-    pitch: str = "+1Hz"
-    style: str = "friendly"
-    styledegree: float = 1.5
+    pitch: str = "+0Hz"
 
 
-async def synth(req: TTSRequest) -> bytes:
-    voice      = VOICES.get(req.voice, VOICES["madina"])
+@app.post("/tts")
+async def tts(req: TTSRequest):
+    voice      = VOICES.get(req.voice, VOICE_FEMALE)
     clean_text = normalize(req.text)
     buf        = io.BytesIO()
     communicate = edge_tts.Communicate(
@@ -57,18 +72,91 @@ async def synth(req: TTSRequest) -> bytes:
         if chunk["type"] == "audio":
             buf.write(chunk["data"])
     buf.seek(0)
-    return buf.read()
+    return StreamingResponse(buf, media_type="audio/mpeg")
 
 
-@app.post("/tts")
-async def tts(req: TTSRequest):
-    audio = await synth(req)
-    return StreamingResponse(io.BytesIO(audio), media_type="audio/mpeg")
+# ─────────────────────────────────────────────
+# Дублирование видео
+# ─────────────────────────────────────────────
+
+async def run_dubbing(task_id: str, video_path: str, output_path: str,
+                      groq_api_key: str, voice: str, src_language: str):
+    """Фоновая задача дублирования"""
+    try:
+        tasks[task_id]["status"] = "processing"
+        tasks[task_id]["message"] = "Обрабатываю видео..."
+
+        result = await dub_video(
+            video_path=video_path,
+            output_path=output_path,
+            groq_api_key=groq_api_key,
+            voice=voice,
+            src_language=src_language if src_language != "auto" else None,
+        )
+
+        tasks[task_id]["status"]   = "done"
+        tasks[task_id]["message"]  = "Готово!"
+        tasks[task_id]["output"]   = str(output_path)
+        tasks[task_id]["segments"] = result["segments"]
+        tasks[task_id]["segment_count"] = result["segment_count"]
+
+    except Exception as e:
+        tasks[task_id]["status"]  = "error"
+        tasks[task_id]["message"] = str(e)
+        print(f"❌ Ошибка: {e}")
 
 
-@app.get("/voices")
-def voices():
-    return {"voices": list(VOICES.keys())}
+@app.post("/dub")
+async def dub(
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    voice: str = Form("madina"),
+    language: str = Form("auto"),
+    groq_key: str = Form(...),
+):
+    # Сохраняем видео
+    task_id    = str(uuid.uuid4())[:8]
+    video_path = UPLOAD_DIR / f"{task_id}_{video.filename}"
+    output_path = OUTPUT_DIR / f"{task_id}_dubbed.mp4"
+
+    with open(video_path, "wb") as f:
+        f.write(await video.read())
+
+    # Создаём задачу
+    tasks[task_id] = {
+        "status":  "queued",
+        "message": "В очереди...",
+        "output":  None,
+    }
+
+    # Запускаем в фоне
+    background_tasks.add_task(
+        run_dubbing,
+        task_id, str(video_path), str(output_path),
+        groq_key, VOICES.get(voice, VOICE_FEMALE), language
+    )
+
+    return JSONResponse({"task_id": task_id})
+
+
+@app.get("/status/{task_id}")
+def status(task_id: str):
+    task = tasks.get(task_id)
+    if not task:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    return JSONResponse(task)
+
+
+@app.get("/download/{task_id}")
+def download(task_id: str):
+    task = tasks.get(task_id)
+    if not task or task["status"] != "done":
+        return JSONResponse({"error": "Not ready"}, status_code=400)
+    return FileResponse(
+        task["output"],
+        media_type="video/mp4",
+        filename=f"dubbed_{task_id}.mp4"
+    )
 
 
 @app.get("/")
@@ -78,6 +166,8 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
-    print("🎤 Uzbek TTS сервер запущен!")
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    print("🎬 Uzbek AI Dubbing Server")
     print("📡 http://localhost:8000")
+    print(f"🔑 Groq API: {'✅' if groq_key else '❌ не найден'}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
