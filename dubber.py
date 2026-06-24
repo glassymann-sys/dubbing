@@ -26,23 +26,23 @@ TTS_VOLUME   = 2.2    # дублёр громко
 # ─────────────────────────────────────────────
 # Промпт — точный правильный перевод
 # ─────────────────────────────────────────────
-TRANSLATE_PROMPT = """Sen professional dublyaj tarjimonisin.
+TRANSLATE_PROMPT = """Sen professional dublyaj tarjimonisin. Vazifang — har qanday matnni aniq va to'g'ri o'zbek tiliga tarjima qilish.
 
-QOIDALAR (majburiy):
-1. Matnni SO'ZMA-SO'Z aniq tarjima qil — hech narsa qo'shma, hech narsa o'chirma
-2. Adabiy o'zbek tilidan foydalan — TV diktoridek, lekin tabiiy
-3. Ko'cha sleng YO'Q: "bro", "zo'r-da", "bem sayil" kabi so'zlar ishlatma
-4. Ismlar, joylar, raqamlarni to'g'ri yoz
-5. Tinish belgilarini saqlagan holda tarjima qil
-6. Faqat tarjima matnini yoz — HECH QANDAY izoh yoki tushuntirish yo'q
-7. Har bir raqamli qatorni alohida tarjima qil
+MUHIM QOIDALAR:
+1. Matnni SO'ZMA-SO'Z tarjima qil — ma'noni o'zgartirma, hech narsa qo'shma
+2. Adabiy o'zbek tilidan foydalan — TV diktoridek ravon va tabiiy
+3. Noqulay yoki salbiy so'zlar ham bo'lsa — ularni ham to'g'ri tarjima qil, senzura qilma
+4. Savol bo'lsa — savol shaklida tarjima qil
+5. His-tuyg'ular (hayrat, kulgu, g'azab) — intonatsiyaga mos tarjima qil
+6. Faqat tarjima matnini yoz — HECH QANDAY izoh, tushuntirish, eslatma yo'q
+7. Har bir raqamli qatorni raqami bilan yoz
 
-Misol:
-Kirdi:  "1. Good morning everyone, today we discuss climate change."
-Chiqdi: "1. Xayrli tong, bugun biz iqlim o'zgarishi haqida gaplashamiz."
+MISOL:
+Kirdi:  "1. Would you go on a date with me?"
+Chiqdi: "1. Men bilan uchrashuv ga borarmidingiz?"
 
-Kirdi:  "2. Scientists have found new evidence."
-Chiqdi: "2. Olimlar yangi dalillar topishdi."
+Kirdi:  "2. No way, that's crazy!"  
+Chiqdi: "2. Yo'q, bu aqldan tashqari!"
 """
 
 
@@ -205,47 +205,12 @@ def get_audio_duration_ffprobe(path: str) -> float:
 
 
 async def generate_tts_synced(seg: dict, out_path: str):
-    """
-    Генерирует TTS и подстраивает скорость под длину оригинала.
-    Если TTS длиннее оригинала — ускоряем.
-    Если короче — оставляем как есть (пауза естественна).
-    """
+    """Генерирует TTS с комфортной скоростью — без ускорения"""
     voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
     text  = normalize(seg["translated"])
-    orig_dur = seg["duration"]
-
-    # Сначала генерируем с нормальной скоростью
-    tmp_path = out_path + "_tmp.mp3"
-    tts = edge_tts.Communicate(text=text, voice=voice, rate="-5%")
-    await tts.save(tmp_path)
-
-    tts_dur = get_audio_duration_ffprobe(tmp_path)
-
-    if tts_dur <= 0:
-        os.rename(tmp_path, out_path)
-        return
-
-    # Вычисляем нужный коэффициент скорости
-    ratio = tts_dur / orig_dur
-
-    if ratio > 1.15:
-        # TTS длиннее оригинала → ускоряем через ffmpeg atempo
-        # atempo принимает значения 0.5–2.0
-        tempo = min(ratio, 2.0)
-        tempo = max(tempo, 0.5)
-        cmd = [
-            "ffmpeg", "-i", tmp_path,
-            "-filter:a", f"atempo={tempo:.3f}",
-            "-y", out_path
-        ]
-        r = subprocess.run(cmd, capture_output=True)
-        if r.returncode != 0:
-            os.rename(tmp_path, out_path)
-        else:
-            os.remove(tmp_path)
-    else:
-        # TTS короче или совпадает — оставляем как есть
-        os.rename(tmp_path, out_path)
+    # -12% — комфортная человеческая скорость, не робот и не быстро
+    tts = edge_tts.Communicate(text=text, voice=voice, rate="-12%")
+    await tts.save(out_path)
 
 
 async def generate_all_tts(segments: list, temp_dir: str) -> list:
