@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from text_normalizer import normalize
 
 app = FastAPI(title="Uzbek TTS API")
 
@@ -53,8 +54,9 @@ class TTSRequest(BaseModel):
 
 
 async def synth(req: TTSRequest) -> bytes:
-    voice = VOICES.get(req.voice, VOICES["madina"])
-    ssml  = build_ssml(req.text, voice, req.rate, req.pitch, req.style, req.styledegree)
+    voice        = VOICES.get(req.voice, VOICES["madina"])
+    clean_text   = normalize(req.text)          # 🔤 нормализация текста
+    ssml         = build_ssml(clean_text, voice, req.rate, req.pitch, req.style, req.styledegree)
     buf   = io.BytesIO()
     communicate = edge_tts.Communicate(text=ssml, voice=voice)
     async for chunk in communicate.stream():
