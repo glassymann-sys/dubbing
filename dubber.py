@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-AI Video Dubber — полный пайплайн
-Видео → Whisper → Groq перевод → Edge TTS → ffmpeg → готовое видео
+AI Video Dubber v2
+Видео → Whisper → Groq перевод → Edge TTS (синхронизированный) → ffmpeg
 """
 
 import os
@@ -9,7 +9,8 @@ import asyncio
 import tempfile
 import subprocess
 import json
-from pathlib import Path
+import numpy as np
+import wave
 
 import whisper
 import edge_tts
@@ -17,168 +18,123 @@ from groq import Groq
 from text_normalizer import normalize
 
 # ─────────────────────────────────────────────
-# Настройки
-# ─────────────────────────────────────────────
 VOICE_FEMALE = "uz-UZ-MadinaNeural"
 VOICE_MALE   = "uz-UZ-SardorNeural"
-
-TTS_RATE   = "-5%"    # немного быстрее чем раньше (-8%)
-TTS_VOLUME = 2.2      # громче чем раньше (было 1.8)
+ORIG_VOLUME  = 0.12   # оригинал тихо на фоне
+TTS_VOLUME   = 2.2    # дублёр громко
 
 # ─────────────────────────────────────────────
-# Промпт перевода — точный, правильный, живой
+# Промпт — точный правильный перевод
 # ─────────────────────────────────────────────
-GROQ_SYSTEM_PROMPT = """Sen professional dublyaj tarjimonisin. Vazifang — matnni to'g'ri va aniq o'zbek tiliga tarjima qilish.
+TRANSLATE_PROMPT = """Sen professional dublyaj tarjimonisin.
 
-Qoidalar:
-1. Matnni SO'ZMA-SO'Z to'g'ri tarjima qil — ma'noni o'zgartirma
-2. Adabiy o'zbek tilidan foydalan — televideniye diktoridek
-3. Hech qanday ko'cha sleng ishlatma (masalan "bro", "zo'r-da", "bem sayil" kabi so'zlar YO'Q)
-4. Raqamlar, ismlar, joy nomlarini to'g'ri talaffuz shaklida yoz
+QOIDALAR (majburiy):
+1. Matnni SO'ZMA-SO'Z aniq tarjima qil — hech narsa qo'shma, hech narsa o'chirma
+2. Adabiy o'zbek tilidan foydalan — TV diktoridek, lekin tabiiy
+3. Ko'cha sleng YO'Q: "bro", "zo'r-da", "bem sayil" kabi so'zlar ishlatma
+4. Ismlar, joylar, raqamlarni to'g'ri yoz
 5. Tinish belgilarini saqlagan holda tarjima qil
-6. Faqat tarjima matnini yoz — izoh, tushuntirish MUTLAQO YO'Q
-7. Har bir raqamli qatorni alohida tarjima qil, raqamni saqlagan holda
+6. Faqat tarjima matnini yoz — HECH QANDAY izoh yoki tushuntirish yo'q
+7. Har bir raqamli qatorni alohida tarjima qil
 
 Misol:
-Kirdi: "1. Hello everyone, welcome to our channel!"
-Chiqdi: "1. Salom hammaga, kanalimizga xush kelibsiz!"
+Kirdi:  "1. Good morning everyone, today we discuss climate change."
+Chiqdi: "1. Xayrli tong, bugun biz iqlim o'zgarishi haqida gaplashamiz."
 
-Kirdi: "2. Today we will talk about science."
-Chiqdi: "2. Bugun biz fan haqida gaplashamiz."
-"""
-
-# Промпт для определения пола спикера
-GENDER_PROMPT = """Quyidagi matn parchalarini tahlil qil va har bir segment uchun spikerni jinsi (erkak yoki ayol) ni aniqlash. 
-
-Faqat JSON formatda javob ber:
-{"segments": [{"index": 1, "gender": "male"}, {"index": 2, "gender": "female"}, ...]}
-
-Agar aniqlab bo'lmasa — "male" deb yoz.
-Matn:
+Kirdi:  "2. Scientists have found new evidence."
+Chiqdi: "2. Olimlar yangi dalillar topishdi."
 """
 
 
 # ─────────────────────────────────────────────
-# Шаг 1: Извлечь аудио из видео
+# Шаг 1: Извлечь аудио
 # ─────────────────────────────────────────────
 
-def extract_audio(video_path: str, output_path: str) -> str:
-    cmd = [
-        "ffmpeg", "-i", video_path,
-        "-vn",
-        "-acodec", "pcm_s16le",
-        "-ar", "16000",
-        "-ac", "1",
-        "-y",
-        output_path
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise Exception(f"ffmpeg error: {result.stderr}")
-    return output_path
+def extract_audio(video_path: str, out_path: str) -> str:
+    cmd = ["ffmpeg", "-i", video_path,
+           "-vn", "-acodec", "pcm_s16le",
+           "-ar", "16000", "-ac", "1", "-y", out_path]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Exception(f"ffmpeg audio extract error: {r.stderr[-300:]}")
+    return out_path
 
 
 # ─────────────────────────────────────────────
-# Шаг 2: Транскрипция через Whisper
+# Шаг 2: Транскрипция Whisper
 # ─────────────────────────────────────────────
 
 def transcribe(audio_path: str, language: str = None) -> list:
-    print("⏳ Загружаю Whisper модель...")
+    print("⏳ Загружаю Whisper...")
     model = whisper.load_model("base")
-    print("🎙️  Транскрибирую...")
-
-    options = {"task": "transcribe"}
+    opts = {"task": "transcribe"}
     if language:
-        options["language"] = language
-
-    result = model.transcribe(audio_path, **options)
-    segments = []
-    for seg in result["segments"]:
-        segments.append({
-            "start":  seg["start"],
-            "end":    seg["end"],
-            "text":   seg["text"].strip(),
-            "gender": "male"   # default, потом определим
+        opts["language"] = language
+    result = model.transcribe(audio_path, **opts)
+    segs = []
+    for s in result["segments"]:
+        segs.append({
+            "start":  s["start"],
+            "end":    s["end"],
+            "text":   s["text"].strip(),
+            "gender": "male"
         })
-        print(f"  [{seg['start']:.1f}s → {seg['end']:.1f}s] {seg['text'].strip()}")
+        print(f"  [{s['start']:.1f}→{s['end']:.1f}s] {s['text'].strip()[:50]}")
+    print(f"✅ {len(segs)} сегментов")
+    return segs
 
-    print(f"✅ Транскрипция готова: {len(segments)} сегментов")
-    return segments
-
-
-# ─────────────────────────────────────────────
-# Шаг 2b: Определение пола спикера через Groq
-# ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
-# Шаг 2b: Определение пола по АУДИО (не тексту)
+# Шаг 2b: Определение пола по частоте голоса
 # ─────────────────────────────────────────────
 
-def detect_gender_by_audio(segments: list, audio_path: str) -> list:
+def detect_gender_by_pitch(segments: list, audio_path: str) -> list:
     """
-    Определяет пол спикера по частоте голоса (pitch).
-    Мужской голос: 85-180 Hz
-    Женский голос: 165-255 Hz
+    Определяет пол по среднему pitch (F0) каждого сегмента.
+    Мужской голос: 85-165 Hz
+    Женский голос: 165-300 Hz
     """
-    print("👥 Определяю пол по голосу (аудио анализ)...")
-
+    print("👥 Анализирую пол по голосу...")
     try:
-        import numpy as np
-        import wave
-        import struct
-
-        # Читаем WAV файл
         with wave.open(audio_path, 'rb') as wf:
-            n_channels = wf.getnchannels()
-            sampwidth  = wf.getsampwidth()
-            framerate  = wf.getframerate()
-            n_frames   = wf.getnframes()
-            raw_data   = wf.readframes(n_frames)
+            framerate = wf.getframerate()
+            raw       = wf.readframes(wf.getnframes())
 
-        # Конвертируем в numpy array
-        if sampwidth == 2:
-            audio_data = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32)
-        else:
-            audio_data = np.frombuffer(raw_data, dtype=np.uint8).astype(np.float32) - 128
+        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
 
-        if n_channels > 1:
-            audio_data = audio_data[::n_channels]
-
-        # Для каждого сегмента определяем среднюю частоту
         for seg in segments:
-            start_sample = int(seg["start"] * framerate)
-            end_sample   = int(seg["end"]   * framerate)
-            chunk = audio_data[start_sample:end_sample]
+            s = int(seg["start"] * framerate)
+            e = int(seg["end"]   * framerate)
+            chunk = audio[s:e]
 
-            if len(chunk) < 100:
-                seg["gender"] = "male"
+            if len(chunk) < framerate * 0.3:  # меньше 300ms — пропускаем
                 continue
 
-            # FFT для определения доминантной частоты
-            fft = np.abs(np.fft.rfft(chunk))
-            freqs = np.fft.rfftfreq(len(chunk), 1.0 / framerate)
+            # Автокорреляция для определения pitch
+            chunk = chunk - chunk.mean()
+            corr  = np.correlate(chunk, chunk, mode='full')
+            corr  = corr[len(corr)//2:]
 
-            # Ищем пик в диапазоне голоса 80-300 Hz
-            voice_mask = (freqs >= 80) & (freqs <= 300)
-            if not np.any(voice_mask):
-                seg["gender"] = "male"
+            # Ищем период в диапазоне голоса
+            min_lag = int(framerate / 300)  # 300 Hz max
+            max_lag = int(framerate / 80)   # 80 Hz min
+            if max_lag >= len(corr):
                 continue
 
-            voice_fft   = fft[voice_mask]
-            voice_freqs = freqs[voice_mask]
-            peak_freq   = voice_freqs[np.argmax(voice_fft)]
+            peak = np.argmax(corr[min_lag:max_lag]) + min_lag
+            if peak == 0:
+                continue
 
-            # Женский голос выше 160 Hz
-            gender = "female" if peak_freq > 160 else "male"
+            pitch = framerate / peak
+
+            # Порог: выше 165 Hz → женский
+            gender = "female" if pitch > 165 else "male"
             seg["gender"] = gender
             icon = "👩" if gender == "female" else "👨"
-            print(f"  {icon} [{seg['start']:.1f}s] {peak_freq:.0f}Hz → {gender} — {seg['text'][:35]}")
+            print(f"  {icon} [{seg['start']:.1f}s] {pitch:.0f}Hz → {gender}")
 
     except Exception as e:
-        print(f"  ⚠️ Аудио анализ не удался: {e}")
-        # Фолбэк: определяем по тексту через Groq
-        for seg in segments:
-            seg["gender"] = "male"
+        print(f"  ⚠️ Pitch анализ не удался: {e} — используем male")
 
     return segments
 
@@ -188,140 +144,178 @@ def detect_gender_by_audio(segments: list, audio_path: str) -> list:
 # ─────────────────────────────────────────────
 
 def translate_segments(segments: list, groq_api_key: str) -> list:
-    client = Groq(api_key=groq_api_key)
-
     print("🌐 Перевожу на узбекский...")
+    client    = Groq(api_key=groq_api_key)
     full_text = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
 
     r = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": GROQ_SYSTEM_PROMPT},
+            {"role": "system", "content": TRANSLATE_PROMPT},
             {"role": "user",   "content": f"Tarjima qil:\n{full_text}"}
         ]
     )
 
-    lines = r.choices[0].message.content.strip().split("\n")
-    translated_texts = {}
-    for line in lines:
+    # Парсим ответ
+    translated_map = {}
+    for line in r.choices[0].message.content.strip().split("\n"):
         line = line.strip()
-        if not line:
-            continue
-        if line[0].isdigit() and ". " in line:
-            num, text = line.split(". ", 1)
+        if line and line[0].isdigit() and ". " in line:
+            num, txt = line.split(". ", 1)
             try:
-                translated_texts[int(num)] = text.strip()
+                translated_map[int(num)] = txt.strip()
             except:
                 pass
 
-    translated = []
+    result = []
     for i, seg in enumerate(segments):
-        uz_text = translated_texts.get(i + 1, seg["text"])
-        translated.append({
+        uz = translated_map.get(i + 1, seg["text"])
+        result.append({
             "start":      seg["start"],
             "end":        seg["end"],
             "original":   seg["text"],
-            "translated": uz_text,
-            "gender":     seg.get("gender", "male")
+            "translated": uz,
+            "gender":     seg.get("gender", "male"),
+            "duration":   seg["end"] - seg["start"],
         })
-        print(f"  [{seg['start']:.1f}s] {seg['text'][:35]} → {uz_text[:40]}")
+        icon = "👩" if seg.get("gender") == "female" else "👨"
+        print(f"  {icon} {seg['text'][:30]} → {uz[:40]}")
 
     print("✅ Перевод готов!")
-    return translated
+    return result
 
 
 # ─────────────────────────────────────────────
-# Шаг 4: TTS — голос по полу спикера
+# Шаг 4: TTS с синхронизацией по времени
 # ─────────────────────────────────────────────
 
-async def generate_tts_segment(text: str, voice: str, output_path: str):
-    clean = normalize(text)
-    tts = edge_tts.Communicate(text=clean, voice=voice, rate=TTS_RATE)
-    await tts.save(output_path)
+def get_audio_duration_ffprobe(path: str) -> float:
+    r = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", path],
+        capture_output=True, text=True
+    )
+    try:
+        data = json.loads(r.stdout)
+        for s in data.get("streams", []):
+            if "duration" in s:
+                return float(s["duration"])
+    except:
+        pass
+    return 1.0
 
 
-async def generate_all_tts(segments: list, default_voice: str, temp_dir: str) -> list:
-    print("🎤 Генерирую узбекский голос...")
-    audio_segments = []
+async def generate_tts_synced(seg: dict, out_path: str):
+    """
+    Генерирует TTS и подстраивает скорость под длину оригинала.
+    Если TTS длиннее оригинала — ускоряем.
+    Если короче — оставляем как есть (пауза естественна).
+    """
+    voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
+    text  = normalize(seg["translated"])
+    orig_dur = seg["duration"]
 
+    # Сначала генерируем с нормальной скоростью
+    tmp_path = out_path + "_tmp.mp3"
+    tts = edge_tts.Communicate(text=text, voice=voice, rate="-5%")
+    await tts.save(tmp_path)
+
+    tts_dur = get_audio_duration_ffprobe(tmp_path)
+
+    if tts_dur <= 0:
+        os.rename(tmp_path, out_path)
+        return
+
+    # Вычисляем нужный коэффициент скорости
+    ratio = tts_dur / orig_dur
+
+    if ratio > 1.15:
+        # TTS длиннее оригинала → ускоряем через ffmpeg atempo
+        # atempo принимает значения 0.5–2.0
+        tempo = min(ratio, 2.0)
+        tempo = max(tempo, 0.5)
+        cmd = [
+            "ffmpeg", "-i", tmp_path,
+            "-filter:a", f"atempo={tempo:.3f}",
+            "-y", out_path
+        ]
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode != 0:
+            os.rename(tmp_path, out_path)
+        else:
+            os.remove(tmp_path)
+    else:
+        # TTS короче или совпадает — оставляем как есть
+        os.rename(tmp_path, out_path)
+
+
+async def generate_all_tts(segments: list, temp_dir: str) -> list:
+    print("🎤 Генерирую голос (синхронизирую с оригиналом)...")
+    result = []
     for i, seg in enumerate(segments):
         out = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
-
-        # Выбираем голос по полу спикера
-        gender = seg.get("gender", "male")
-        if gender == "female":
-            voice = VOICE_FEMALE
-        else:
-            voice = VOICE_MALE
-
-        await generate_tts_segment(seg["translated"], voice, out)
-        icon = "👩" if gender == "female" else "👨"
-        audio_segments.append({**seg, "audio_file": out})
-        print(f"  [{i+1}/{len(segments)}] {icon} {seg['translated'][:45]}...")
-
+        await generate_tts_synced(seg, out)
+        icon = "👩" if seg["gender"] == "female" else "👨"
+        print(f"  [{i+1}/{len(segments)}] {icon} {seg['translated'][:45]}")
+        result.append({**seg, "audio_file": out})
     print("✅ TTS готов!")
-    return audio_segments
+    return result
 
 
 # ─────────────────────────────────────────────
-# Шаг 5: Собрать финальное видео через ffmpeg
+# Шаг 5: Сборка видео через ffmpeg
 # ─────────────────────────────────────────────
 
-def create_dubbed_video(
-    original_video: str,
-    segments: list,
-    output_path: str,
-    temp_dir: str,
-    original_volume: float = 0.15
-) -> str:
+def create_dubbed_video(original_video: str, segments: list,
+                        output_path: str, temp_dir: str) -> str:
     print("🎬 Собираю финальное видео...")
 
+    # Длительность оригинала
     probe = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", original_video],
         capture_output=True, text=True
     )
-    video_duration = float(json.loads(probe.stdout)["format"]["duration"])
+    video_dur = float(json.loads(probe.stdout)["format"]["duration"])
 
-    input_args = ["-i", original_video]
+    # ffmpeg inputs
+    inputs = ["-i", original_video]
     for seg in segments:
-        input_args += ["-i", seg["audio_file"]]
+        inputs += ["-i", seg["audio_file"]]
 
-    n_segs = len(segments)
-    filters = [f"[0:a]volume={original_volume}[orig]"]
+    n = len(segments)
 
-    seg_labels = []
+    # Filters
+    filters = [f"[0:a]volume={ORIG_VOLUME}[orig]"]
+    labels  = []
     for i, seg in enumerate(segments):
-        delay_ms = int(seg["start"] * 1000)
-        label = f"s{i}"
-        filters.append(f"[{i+1}:a]adelay={delay_ms}|{delay_ms},volume={TTS_VOLUME}[{label}]")
-        seg_labels.append(f"[{label}]")
+        delay = int(seg["start"] * 1000)
+        lbl   = f"s{i}"
+        filters.append(
+            f"[{i+1}:a]adelay={delay}|{delay},volume={TTS_VOLUME}[{lbl}]"
+        )
+        labels.append(f"[{lbl}]")
 
-    all_inputs = "[orig]" + "".join(seg_labels)
+    all_in = "[orig]" + "".join(labels)
     filters.append(
-        f"{all_inputs}amix=inputs={n_segs+1}:normalize=0:dropout_transition=0[aout]"
+        f"{all_in}amix=inputs={n+1}:normalize=0:dropout_transition=0[aout]"
     )
-
-    filter_complex = ";".join(filters)
 
     cmd = [
         "ffmpeg",
-        *input_args,
-        "-filter_complex", filter_complex,
+        *inputs,
+        "-filter_complex", ";".join(filters),
         "-map", "0:v",
         "-map", "[aout]",
         "-c:v", "copy",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-t", str(video_duration),
-        "-y",
-        output_path
+        "-c:a", "aac", "-b:a", "192k",
+        "-t", str(video_dur),
+        "-y", output_path
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise Exception(f"ffmpeg error: {result.stderr[-500:]}")
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Exception(f"ffmpeg: {r.stderr[-400:]}")
 
-    print(f"✅ Видео готово: {output_path}")
+    print(f"✅ Видео: {output_path}")
     return output_path
 
 
@@ -329,51 +323,34 @@ def create_dubbed_video(
 # Главная функция
 # ─────────────────────────────────────────────
 
-async def dub_video(
-    video_path: str,
-    output_path: str,
-    groq_api_key: str,
-    voice: str = VOICE_MALE,
-    src_language: str = None,
-    original_volume: float = 0.15
-) -> dict:
-    print(f"\n🎬 Начинаю дублирование: {video_path}")
+async def dub_video(video_path: str, output_path: str, groq_api_key: str,
+                    voice: str = VOICE_MALE, src_language: str = None,
+                    original_volume: float = ORIG_VOLUME) -> dict:
+    print(f"\n🎬 Дублирую: {video_path}")
     print("=" * 55)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory() as tmp:
 
-        # 1. Извлечь аудио
-        print("\n📢 Шаг 1/5: Извлекаю аудио...")
-        audio_path = os.path.join(temp_dir, "audio.wav")
-        extract_audio(video_path, audio_path)
+        print("\n📢 1/5 Извлекаю аудио...")
+        audio = os.path.join(tmp, "audio.wav")
+        extract_audio(video_path, audio)
 
-        # 2. Транскрипция
-        print("\n📝 Шаг 2/5: Транскрибирую речь...")
-        segments = transcribe(audio_path, language=src_language)
-        if not segments:
-            raise Exception("Речь не найдена в видео")
+        print("\n📝 2/5 Транскрибирую (Whisper)...")
+        segs = transcribe(audio, language=src_language)
+        if not segs:
+            raise Exception("Речь не найдена")
 
-        # 2b. Определение пола по аудио
-        segments = detect_gender_by_audio(segments, audio_path)
+        print("\n👥 2b Определяю пол спикеров...")
+        segs = detect_gender_by_pitch(segs, audio)
 
-        # 3. Перевод
-        print("\n🌐 Шаг 3/5: Перевожу на узбекский...")
-        translated = translate_segments(segments, groq_api_key)
+        print("\n🌐 3/5 Перевожу (Groq)...")
+        translated = translate_segments(segs, groq_api_key)
 
-        # 4. TTS
-        print("\n🎤 Шаг 4/5: Генерирую узбекский голос...")
-        audio_segs = await generate_all_tts(translated, voice, temp_dir)
+        print("\n🎤 4/5 Генерирую голос (TTS)...")
+        audio_segs = await generate_all_tts(translated, tmp)
 
-        # 5. Собрать видео
-        print("\n🎬 Шаг 5/5: Собираю финальное видео...")
-        create_dubbed_video(video_path, audio_segs, output_path, temp_dir, original_volume)
+        print("\n🎬 5/5 Собираю видео (ffmpeg)...")
+        create_dubbed_video(video_path, audio_segs, output_path, tmp)
 
-    print("\n" + "=" * 55)
-    print(f"🎉 ГОТОВО! Видео: {output_path}")
-    print("=" * 55)
-
-    return {
-        "output":        output_path,
-        "segments":      translated,
-        "segment_count": len(translated)
-    }
+    print(f"\n🎉 ГОТОВО: {output_path}")
+    return {"output": output_path, "segments": translated, "segment_count": len(translated)}
