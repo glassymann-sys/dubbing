@@ -120,66 +120,64 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
 # по частоте голоса (pitch)
 # ─────────────────────────────────────────────
 
-def detect_speaker_genders(segments: list, audio_path: str) -> dict:
+def detect_speaker_genders_ai(segments: list, groq_api_key: str) -> dict:
     """
-    Определяет пол каждого уникального спикера (A, B, C...).
-    Возвращает словарь: {"A": "male", "B": "female"}
+    Groq анализирует весь разговор и определяет пол каждого спикера.
+    Смотрит на контекст, имена, местоимения, стиль речи.
     """
-    print("👥 Определяю пол каждого спикера по голосу...")
+    print("👥 Groq определяет пол спикеров по контексту разговора...")
 
-    import numpy as np
-    import wave
+    client = Groq(api_key=groq_api_key)
+
+    # Строим полный диалог с метками спикеров
+    dialog = "\n".join([
+        f"Speaker {s['speaker']}: {s['text']}"
+        for s in segments
+    ])
+
+    speakers = list(set(s['speaker'] for s in segments))
 
     try:
-        with wave.open(audio_path, 'rb') as wf:
-            framerate = wf.getframerate()
-            raw       = wf.readframes(wf.getnframes())
+        r = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You are an expert at detecting speaker gender from conversation context.
+Analyze the conversation and determine the gender of each speaker.
+Look for: pronouns (he/she/his/her/I/me), names, topics discussed, speaking style.
+Reply ONLY with valid JSON: {"A": "male", "B": "female"}
+If unsure, make your best guess based on context."""
+                },
+                {
+                    "role": "user",
+                    "content": f"Determine gender for each speaker in this conversation:\n\n{dialog}\n\nSpeakers to identify: {speakers}"
+                }
+            ],
+            response_format={"type": "json_object"}
+        )
 
-        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        result = json.loads(r.choices[0].message.content)
+        # Нормализуем ответ
+        genders = {}
+        for spk in speakers:
+            gender = result.get(spk, "male").lower()
+            if "female" in gender or "woman" in gender or "girl" in gender:
+                genders[spk] = "female"
+            else:
+                genders[spk] = "male"
+            icon = "👩" if genders[spk] == "female" else "👨"
+            print(f"  Speaker {spk} → {icon} {genders[spk]}")
 
-        # Для каждого спикера собираем все его фрагменты
-        speaker_pitches = {}
-        for seg in segments:
-            spk  = seg["speaker"]
-            s    = int(seg["start"] * framerate)
-            e    = int(seg["end"]   * framerate)
-            chunk = audio[s:e]
-
-            if len(chunk) < framerate * 0.3:
-                continue
-
-            # Автокорреляция для pitch
-            chunk = chunk - chunk.mean()
-            corr  = np.correlate(chunk, chunk, mode='full')
-            corr  = corr[len(corr)//2:]
-
-            min_lag = int(framerate / 300)
-            max_lag = int(framerate / 80)
-            if max_lag >= len(corr):
-                continue
-
-            peak  = np.argmax(corr[min_lag:max_lag]) + min_lag
-            pitch = framerate / peak if peak > 0 else 0
-
-            if pitch > 0:
-                if spk not in speaker_pitches:
-                    speaker_pitches[spk] = []
-                speaker_pitches[spk].append(pitch)
-
-        # Средний pitch каждого спикера
-        speaker_genders = {}
-        for spk, pitches in speaker_pitches.items():
-            avg_pitch = sum(pitches) / len(pitches)
-            gender    = "female" if avg_pitch > 165 else "male"
-            speaker_genders[spk] = gender
-            icon = "👩" if gender == "female" else "👨"
-            print(f"  Speaker {spk}: {avg_pitch:.0f}Hz → {icon} {gender}")
-
-        return speaker_genders
+        return genders
 
     except Exception as e:
-        print(f"  ⚠️ Pitch анализ не удался: {e}")
-        return {}
+        print(f"  ⚠️ Groq gender detection failed: {e}")
+        # Фолбэк: первый спикер мужчина, второй женщина
+        genders = {}
+        for i, spk in enumerate(sorted(speakers)):
+            genders[spk] = "female" if i % 2 == 1 else "male"
+        return genders
 
 
 # ─────────────────────────────────────────────
@@ -360,8 +358,9 @@ def create_dubbed_video(original_video: str, segments: list,
 
     for i, seg in enumerate(segments):
         inputs += ["-i", seg["audio_file"]]
-        delay   = int(seg["start"] * 1000)
-        lbl     = f"s{i}"
+        # +150ms задержка чтобы голос не опережал видео
+        delay = int(seg["start"] * 1000) + 150
+        lbl   = f"s{i}"
         filters.append(
             f"[{i+1}:a]adelay={delay}|{delay},volume={TTS_VOLUME}[{lbl}]"
         )
@@ -417,9 +416,9 @@ async def dub_video(video_path: str, output_path: str, groq_api_key: str,
         if not segs:
             raise Exception("Речь не найдена")
 
-        # 2b. Пол каждого спикера
-        print("\n👥 Определяю пол спикеров...")
-        speaker_genders = detect_speaker_genders(segs, audio)
+        # 2b. Пол каждого спикера через Groq AI
+        print("\n👥 Groq определяет пол спикеров...")
+        speaker_genders = detect_speaker_genders_ai(segs, groq_api_key)
         for seg in segs:
             seg["gender"] = speaker_genders.get(seg["speaker"], "male")
 
