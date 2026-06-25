@@ -170,7 +170,66 @@ def extract_subtitles_ocr(video_path: str) -> list:
     return unique
 
 
-if __name__ == "__main__":
+def clean_subtitles_with_ai(subtitles: list, groq_api_key: str) -> list:
+    """
+    Groq исправляет OCR ошибки и определяет реальный текст субтитров.
+    """
+    if not subtitles:
+        return []
+
+    print("🤖 Groq исправляет OCR субтитры...")
+    client = Groq(api_key=groq_api_key)
+
+    # Отправляем все субтитры одним запросом
+    raw_text = "\n".join([
+        f"{i+1}. [{s['start']:.1f}s] {s['text']}"
+        for i, s in enumerate(subtitles)
+    ])
+
+    r = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are an OCR correction expert. 
+These are subtitles extracted from video via OCR — they contain errors.
+Fix each subtitle to its most likely correct English text.
+If a subtitle is pure garbage/noise with no readable words, mark it as REMOVE.
+Keep the timestamp format exactly.
+Reply with corrected subtitles in same numbered format."""
+            },
+            {
+                "role": "user",
+                "content": f"Fix these OCR subtitles:\n{raw_text}"
+            }
+        ]
+    )
+
+    # Парсим ответ
+    cleaned = []
+    lines   = r.choices[0].message.content.strip().split("\n")
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line or "REMOVE" in line.upper():
+            continue
+        # Убираем номер и временную метку
+        if ". [" in line and "] " in line:
+            try:
+                text_part = line.split("] ", 1)[1].strip()
+                if len(text_part) > 2:
+                    cleaned.append({
+                        "start": subtitles[i]["start"] if i < len(subtitles) else 0,
+                        "end":   subtitles[i]["end"]   if i < len(subtitles) else 0,
+                        "text":  text_part
+                    })
+            except:
+                pass
+
+    print(f"  ✅ После очистки: {len(cleaned)} субтитров")
+    for s in cleaned:
+        print(f"    [{s['start']:.1f}s] {s['text']}")
+
+    return cleaned
     import sys
     import glob
 
@@ -184,3 +243,12 @@ if __name__ == "__main__":
     print(f"Тестирую на: {video}")
     subs = extract_subtitles_ocr(video)
     print(f"\nИтого: {len(subs)} субтитров")
+
+    # Очищаем через Groq
+    import os
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if groq_key:
+        cleaned = clean_subtitles_with_ai(subs, groq_key)
+        print(f"\n✅ Финальных субтитров: {len(cleaned)}")
+    else:
+        print("⚠️ GROQ_API_KEY не найден")
