@@ -230,8 +230,12 @@ Reply with corrected subtitles in same numbered format."""
         print(f"    [{s['start']:.1f}s] {s['text']}")
 
     return cleaned
+
+
+if __name__ == "__main__":
     import sys
     import glob
+    from groq import Groq
 
     files = sorted(glob.glob("uploads/*.mov") + glob.glob("uploads/*.mp4"))
     video = files[-1] if files else None
@@ -244,8 +248,6 @@ Reply with corrected subtitles in same numbered format."""
     subs = extract_subtitles_ocr(video)
     print(f"\nИтого: {len(subs)} субтитров")
 
-    # Очищаем через Groq
-    import os
     groq_key = os.environ.get("GROQ_API_KEY", "")
     if groq_key:
         cleaned = clean_subtitles_with_ai(subs, groq_key)
