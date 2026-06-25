@@ -73,18 +73,37 @@ def extract_subtitle_frames(video_path: str, temp_dir: str,
 
 
 def ocr_frame(image_path: str) -> str:
-    """OCR одного кадра — извлекает текст"""
+    """OCR одного кадра — извлекает текст субтитров"""
     try:
         img = Image.open(image_path)
 
-        # Увеличиваем контраст для лучшего OCR
-        img = img.convert("L")  # grayscale
+        # Конвертируем в RGB
+        img = img.convert("RGB")
+        import numpy as np
+        arr = np.array(img)
 
-        # Tesseract с английским и русским
+        # Субтитры обычно белый/жёлтый текст
+        # Маска для белого текста (R>200, G>200, B>200)
+        white_mask = (arr[:,:,0] > 200) & (arr[:,:,1] > 200) & (arr[:,:,2] > 200)
+        # Маска для жёлтого текста (R>200, G>200, B<100)
+        yellow_mask = (arr[:,:,0] > 200) & (arr[:,:,1] > 200) & (arr[:,:,2] < 100)
+
+        mask = white_mask | yellow_mask
+
+        # Создаём чёрно-белое изображение: текст чёрный, фон белый
+        result = np.ones_like(arr) * 255
+        result[mask] = 0
+
+        img_bw = Image.fromarray(result.astype(np.uint8))
+
+        # Увеличиваем для лучшего OCR
+        w, h = img_bw.size
+        img_bw = img_bw.resize((w*2, h*2), Image.LANCZOS)
+
         text = pytesseract.image_to_string(
-            img,
+            img_bw,
             lang="eng",
-            config="--psm 6 --oem 3"
+            config="--psm 6 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?'-"
         )
         return text.strip()
     except:
