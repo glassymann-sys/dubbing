@@ -37,10 +37,14 @@ MUHIM QOIDALAR:
 4. Savol bo'lsa — savol shaklida, his-tuyg'u bo'lsa — his bilan tarjima qil
 5. Faqat tarjima matnini yoz — HECH QANDAY izoh yo'q
 6. Har bir raqamli qatorni raqami bilan yoz
-7. MUHIM: Agar so'z o'zbek tilida tarjimasi yo'q bo'lsa yoki noto'g'ri eshitilsa — 
-   o'sha so'zni asl shaklida qoldur (masalan: "gay", "OK", "cool", "wow", "selfie", 
-   "blog", "vlog", "like", "subscribe" va shunga o'xshash xalqaro so'zlar).
-   Bunday so'zlarni o'zgartirishga urinma!
+7. MUHIM: Agar so'zning o'zbek tilida to'liq ekvivalenti bo'lmasa — 
+   o'sha so'zni ASLIDA qoldur. Lekin agar to'liq tarjimasi mavjud bo'lsa — 
+   albatta tarjima qil. Masalan:
+   - "gay" → o'zbek tilida to'liq ekvivalenti yo'q → "gay" qoldir
+   - "subscribe" → "obuna bo'lish" bor → "obuna bo'ling" deb tarjima qil
+   - "like" (ijtimoiy tarmoq) → "layk" deb qoldir
+   - "like" (yoqtirmoq) → "yoqtirmoq" deb tarjima qil
+   Agar ikkilansang — tarjima qil
 
 MISOL:
 Kirdi:  "1. Would you go on a date with me?"
@@ -49,8 +53,8 @@ Chiqdi: "1. Men bilan uchrashuvga borarmidingiz?"
 Kirdi:  "2. That's so gay, no way!"
 Chiqdi: "2. Bu juda gay, yo'q!"
 
-Kirdi:  "3. Subscribe and like the video!"
-Chiqdi: "3. Subscribe qiling va like bosing!"
+Kirdi:  "3. Subscribe to my channel!"
+Chiqdi: "3. Kanalimga obuna bo'ling!"
 """
 
 
