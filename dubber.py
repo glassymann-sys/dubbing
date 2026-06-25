@@ -9,18 +9,21 @@ import asyncio
 import tempfile
 import subprocess
 import json
+import numpy as np
+import wave
 
 import assemblyai as aai
 import edge_tts
 from groq import Groq
 from text_normalizer import normalize
+from prosody import load_audio, analyze_segment_prosody, apply_prosody
 
 # ─────────────────────────────────────────────
 VOICE_FEMALE = "uz-UZ-MadinaNeural"
 VOICE_MALE   = "uz-UZ-SardorNeural"
 ORIG_VOLUME  = 0.12
 TTS_VOLUME   = 2.2
-TTS_RATE     = "-5%"   # чуть быстрее чем -12%
+TTS_RATE = "+5%"  # чуть быстрее
 
 # ─────────────────────────────────────────────
 # Промпт перевода
@@ -274,8 +277,19 @@ def fit_audio_to_duration(in_path: str, out_path: str, target_dur: float):
         pass
 
 
-async def generate_all_tts(segments: list, temp_dir: str) -> list:
-    print("🎤 Генерирую голос (синхронизирую по времени)...")
+async def generate_all_tts(segments: list, temp_dir: str,
+                           orig_audio_path: str = None) -> list:
+    print("🎤 Генерирую голос (с переносом интонации)...")
+
+    # Загружаем оригинал для анализа просодии
+    orig_data, orig_sr = None, 16000
+    if orig_audio_path and os.path.exists(orig_audio_path):
+        try:
+            orig_data, orig_sr = load_audio(orig_audio_path)
+            print("  ✅ Оригинал загружен для анализа интонации")
+        except Exception as e:
+            print(f"  ⚠️ Не удалось загрузить оригинал: {e}")
+
     result = []
     for i, seg in enumerate(segments):
         raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.mp3")
@@ -287,12 +301,26 @@ async def generate_all_tts(segments: list, temp_dir: str) -> list:
         tts   = edge_tts.Communicate(text=text, voice=voice, rate=TTS_RATE)
         await tts.save(raw_path)
 
-        # 2. Подгоняем под длину оригинального сегмента
-        fit_audio_to_duration(raw_path, out_path, seg["duration"])
+        # 2. Анализируем просодию оригинала для этого сегмента
+        if orig_data is not None:
+            try:
+                orig_stats = analyze_segment_prosody(
+                    orig_data, orig_sr, seg["start"], seg["end"]
+                )
+                # 3. Применяем просодию к TTS
+                apply_prosody(raw_path, out_path, orig_stats)
+            except Exception as e:
+                print(f"  ⚠️ Просодия не применена: {e}")
+                try: os.rename(raw_path, out_path)
+                except: pass
+        else:
+            try: os.rename(raw_path, out_path)
+            except: pass
 
         icon = "👩" if seg["gender"] == "female" else "👨"
-        print(f"  [{i+1}/{len(segments)}] {icon} Spk{seg['speaker']}: {seg['translated'][:45]}")
+        print(f"  [{i+1}/{len(segments)}] {icon} {seg['translated'][:45]}")
         result.append({**seg, "audio_file": out_path})
+
     print("✅ TTS готов!")
     return result
 
@@ -385,9 +413,9 @@ async def dub_video(video_path: str, output_path: str, groq_api_key: str,
         print("\n🌐 3/5 Перевожу (Groq)...")
         translated = translate_segments(segs, groq_api_key)
 
-        # 4. TTS
-        print("\n🎤 4/5 Генерирую голос (TTS)...")
-        audio_segs = await generate_all_tts(translated, tmp)
+        # 4. TTS с переносом интонации
+        print("\n🎤 4/5 Генерирую голос (интонация оригинала)...")
+        audio_segs = await generate_all_tts(translated, tmp, audio)
 
         # 5. Видео
         print("\n🎬 5/5 Собираю видео (ffmpeg)...")
