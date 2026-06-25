@@ -37,13 +37,20 @@ MUHIM QOIDALAR:
 4. Savol bo'lsa — savol shaklida, his-tuyg'u bo'lsa — his bilan tarjima qil
 5. Faqat tarjima matnini yoz — HECH QANDAY izoh yo'q
 6. Har bir raqamli qatorni raqami bilan yoz
+7. MUHIM: Agar so'z o'zbek tilida tarjimasi yo'q bo'lsa yoki noto'g'ri eshitilsa — 
+   o'sha so'zni asl shaklida qoldur (masalan: "gay", "OK", "cool", "wow", "selfie", 
+   "blog", "vlog", "like", "subscribe" va shunga o'xshash xalqaro so'zlar).
+   Bunday so'zlarni o'zgartirishga urinma!
 
 MISOL:
 Kirdi:  "1. Would you go on a date with me?"
 Chiqdi: "1. Men bilan uchrashuvga borarmidingiz?"
 
-Kirdi:  "2. No way, that's crazy!"
-Chiqdi: "2. Yo'q, bu aqldan tashqari!"
+Kirdi:  "2. That's so gay, no way!"
+Chiqdi: "2. Bu juda gay, yo'q!"
+
+Kirdi:  "3. Subscribe and like the video!"
+Chiqdi: "3. Subscribe qiling va like bosing!"
 """
 
 
@@ -281,7 +288,6 @@ async def generate_all_tts(segments: list, temp_dir: str,
                            orig_audio_path: str = None) -> list:
     print("🎤 Генерирую голос (с переносом интонации)...")
 
-    # Загружаем оригинал для анализа просодии
     orig_data, orig_sr = None, 16000
     if orig_audio_path and os.path.exists(orig_audio_path):
         try:
@@ -295,19 +301,23 @@ async def generate_all_tts(segments: list, temp_dir: str,
         raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.mp3")
         out_path = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
 
-        # 1. Генерируем TTS
         voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
         text  = normalize(seg["translated"])
-        tts   = edge_tts.Communicate(text=text, voice=voice, rate=TTS_RATE)
+
+        # Мужской голос — делаем чуть ниже через pitch
+        if seg["gender"] == "male":
+            tts = edge_tts.Communicate(text=text, voice=voice,
+                                        rate=TTS_RATE, pitch="-4Hz")
+        else:
+            tts = edge_tts.Communicate(text=text, voice=voice,
+                                        rate=TTS_RATE, pitch="+0Hz")
         await tts.save(raw_path)
 
-        # 2. Анализируем просодию оригинала для этого сегмента
         if orig_data is not None:
             try:
                 orig_stats = analyze_segment_prosody(
                     orig_data, orig_sr, seg["start"], seg["end"]
                 )
-                # 3. Применяем просодию к TTS
                 apply_prosody(raw_path, out_path, orig_stats)
             except Exception as e:
                 print(f"  ⚠️ Просодия не применена: {e}")
