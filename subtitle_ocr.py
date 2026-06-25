@@ -13,22 +13,20 @@ import tempfile
 
 
 def extract_subtitle_frames(video_path: str, temp_dir: str,
-                             fps: float = 2.0) -> list:
+                             fps: float = 3.0) -> list:
     """
-    Извлекает кадры из нижней части видео где обычно субтитры.
-    fps=2 означает 2 кадра в секунду — достаточно для субтитров.
+    Извлекает кадры из средне-нижней части видео где субтитры.
     """
     frames_dir = os.path.join(temp_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
 
-    # Получаем размер видео
     probe = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json",
          "-show_streams", video_path],
         capture_output=True, text=True
     )
     data = json.loads(probe.stdout)
-    width, height = 1920, 1080  # default
+    width, height = 1920, 1080
     duration = 30.0
 
     for s in data.get("streams", []):
@@ -43,9 +41,9 @@ def extract_subtitle_frames(video_path: str, temp_dir: str,
 
     print(f"  Видео: {width}x{height}, {duration:.1f} сек")
 
-    # Извлекаем только нижнюю 25% часть (где субтитры)
-    crop_h    = height // 4
-    crop_y    = height - crop_h
+    # Берём среднюю нижнюю часть — от 50% до 85% высоты
+    crop_y = int(height * 0.50)
+    crop_h = int(height * 0.35)
     out_pattern = os.path.join(frames_dir, "frame_%04d.png")
 
     cmd = [
@@ -55,7 +53,6 @@ def extract_subtitle_frames(video_path: str, temp_dir: str,
     ]
     subprocess.run(cmd, capture_output=True)
 
-    # Собираем список кадров с временными метками
     frames = []
     frame_files = sorted([
         f for f in os.listdir(frames_dir) if f.endswith(".png")
@@ -73,26 +70,19 @@ def extract_subtitle_frames(video_path: str, temp_dir: str,
 
 
 def ocr_frame(image_path: str) -> str:
-    """OCR одного кадра — извлекает текст субтитров"""
+    """OCR одного кадра — извлекает белый текст субтитров"""
     try:
         img = Image.open(image_path)
-
-        # Конвертируем в RGB
         img = img.convert("RGB")
         import numpy as np
         arr = np.array(img)
 
-        # Субтитры обычно белый/жёлтый текст
-        # Маска для белого текста (R>200, G>200, B>200)
-        white_mask = (arr[:,:,0] > 200) & (arr[:,:,1] > 200) & (arr[:,:,2] > 200)
-        # Маска для жёлтого текста (R>200, G>200, B<100)
-        yellow_mask = (arr[:,:,0] > 200) & (arr[:,:,1] > 200) & (arr[:,:,2] < 100)
+        # Белый текст: все каналы > 180
+        white_mask = (arr[:,:,0] > 180) & (arr[:,:,1] > 180) & (arr[:,:,2] > 180)
 
-        mask = white_mask | yellow_mask
-
-        # Создаём чёрно-белое изображение: текст чёрный, фон белый
+        # Белый текст → чёрный на белом фоне
         result = np.ones_like(arr) * 255
-        result[mask] = 0
+        result[white_mask] = 0
 
         img_bw = Image.fromarray(result.astype(np.uint8))
 
@@ -103,9 +93,12 @@ def ocr_frame(image_path: str) -> str:
         text = pytesseract.image_to_string(
             img_bw,
             lang="eng",
-            config="--psm 6 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?'-"
+            config="--psm 6 --oem 3"
         )
-        return text.strip()
+        # Убираем строки с мусором (меньше 3 букв)
+        lines = [l.strip() for l in text.split('\n')
+                 if len(l.strip()) > 3 and any(c.isalpha() for c in l)]
+        return " ".join(lines).strip()
     except:
         return ""
 
