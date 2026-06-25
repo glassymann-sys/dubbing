@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-AI Video Dubber v3
-Видео → AssemblyAI (транскрипция + диаризация) → Groq перевод → Edge TTS → ffmpeg
+AI Video Dubber v4 — улучшенная версия
+Видео → AssemblyAI → Groq (умный перевод) → Edge TTS (синхронизация) → ffmpeg
 """
 
 import os
@@ -21,45 +21,40 @@ from prosody import load_audio, analyze_segment_prosody, apply_prosody
 # ─────────────────────────────────────────────
 VOICE_FEMALE = "uz-UZ-MadinaNeural"
 VOICE_MALE   = "uz-UZ-SardorNeural"
-ORIG_VOLUME  = 0.12
-TTS_VOLUME   = 2.2
-TTS_RATE = "+5%"  # чуть быстрее
+ORIG_VOLUME  = 0.08   # оригинал очень тихо на фоне
+TTS_VOLUME   = 2.5    # дублёр громче
+TTS_RATE     = "+5%"  # чуть быстрее естественной речи
 
 # ─────────────────────────────────────────────
-# Промпт перевода
+# Промпт перевода — с контекстом
 # ─────────────────────────────────────────────
-TRANSLATE_PROMPT = """Sen professional dublyaj tarjimonisin. Har qanday matnni aniq va to'g'ri o'zbek tiliga tarjima qilish.
+def build_translate_prompt(full_context: str) -> str:
+    return f"""Sen professional dublyaj tarjimonisin. Quyidagi video matnini aniq va tabiiy o'zbek tiliga tarjima qil.
 
-MUHIM QOIDALAR:
-1. Matnni SO'ZMA-SO'Z tarjima qil — ma'noni o'zgartirma, hech narsa qo'shma
-2. Adabiy o'zbek tilidan foydalan — TV diktoridek ravon va tabiiy
-3. Har qanday so'zni ham to'g'ri tarjima qil, senzura qilma
-4. Savol bo'lsa — savol shaklida, his-tuyg'u bo'lsa — his bilan tarjima qil
-5. Faqat tarjima matnini yoz — HECH QANDAY izoh yo'q
-6. Har bir raqamli qatorni raqami bilan yoz
-7. MUHIM: Agar so'zning o'zbek tilida to'liq ekvivalenti bo'lmasa — 
-   o'sha so'zni ASLIDA qoldur. Lekin agar to'liq tarjimasi mavjud bo'lsa — 
-   albatta tarjima qil. Masalan:
-   - "gay" → o'zbek tilida to'liq ekvivalenti yo'q → "gay" qoldir
-   - "subscribe" → "obuna bo'lish" bor → "obuna bo'ling" deb tarjima qil
-   - "like" (ijtimoiy tarmoq) → "layk" deb qoldir
-   - "like" (yoqtirmoq) → "yoqtirmoq" deb tarjima qil
-   Agar ikkilansang — tarjima qil
+VIDEO KONTEKSTI (umumiy tushunish uchun):
+{full_context}
+
+QOIDALAR:
+1. Har bir gapni SO'ZMA-SO'Z tarjima qil — ma'noni o'zgartirma
+2. Adabiy o'zbek tili — TV diktoridek, lekin tabiiy va jonli
+3. His-tuyg'ularni saqlagan holda tarjima qil (hayrat, kulgu, g'azab va h.k.)
+4. Savol → savol, undov → undov shaklida tarjima qil
+5. O'zbek tilida to'liq ekvivalenti bo'lmagan so'zlarni aslida qoldur (gay, OK, wow va h.k.)
+6. Faqat tarjima matnini yoz — hech qanday izoh yo'q
+7. Har bir raqamli qatorni raqami bilan yoz
+8. Tinish belgilarini saqlagan holda tarjima qil
 
 MISOL:
-Kirdi:  "1. Would you go on a date with me?"
-Chiqdi: "1. Men bilan uchrashuvga borarmidingiz?"
+Kirdi:  "1. Oh wow, would you really go on a date with me?!"
+Chiqdi: "1. Voy, haqiqatan ham men bilan uchrashuvga borarmidingiz?!"
 
-Kirdi:  "2. That's so gay, no way!"
-Chiqdi: "2. Bu juda gay, yo'q!"
-
-Kirdi:  "3. Subscribe to my channel!"
-Chiqdi: "3. Kanalimga obuna bo'ling!"
+Kirdi:  "2. That's crazy, no way!"
+Chiqdi: "2. Bu aqldan tashqari, yo'q!"
 """
 
 
 # ─────────────────────────────────────────────
-# Шаг 1: Извлечь аудио из видео
+# Шаг 1: Извлечь аудио
 # ─────────────────────────────────────────────
 
 def extract_audio(video_path: str, out_path: str) -> str:
@@ -78,63 +73,44 @@ def extract_audio(video_path: str, out_path: str) -> str:
 
 def transcribe_with_diarization(audio_path: str, api_key: str,
                                  language: str = None) -> list:
-    """
-    AssemblyAI транскрибирует речь И определяет спикеров (A, B, C...).
-    Возвращает сегменты с speaker label.
-    """
-    print("🎙️  AssemblyAI: транскрипция + определение спикеров...")
-
+    print("🎙️  AssemblyAI: транскрипция + спикеры...")
     aai.settings.api_key = api_key
 
     config = aai.TranscriptionConfig(
-        speaker_labels=True,        # ← диаризация спикеров!
-        speakers_expected=2,        # ожидаем 2 спикера
-        language_detection=True if not language else False,
+        speaker_labels=True,
+        speakers_expected=2,
+        language_detection=not bool(language),
         language_code=language if language else None,
     )
 
-    transcriber = aai.Transcriber()
-    transcript  = transcriber.transcribe(audio_path, config=config)
+    transcript = aai.Transcriber().transcribe(audio_path, config=config)
 
     if transcript.status == aai.TranscriptStatus.error:
         raise Exception(f"AssemblyAI error: {transcript.error}")
 
-    # Собираем сегменты с метками спикеров
     segments = []
     for utt in transcript.utterances:
         segments.append({
-            "start":   utt.start / 1000.0,   # ms → sec
+            "start":   utt.start / 1000.0,
             "end":     utt.end   / 1000.0,
             "text":    utt.text.strip(),
-            "speaker": utt.speaker,           # "A", "B", "C"...
-            "gender":  "male"                 # определим ниже
+            "speaker": utt.speaker,
+            "gender":  "male"
         })
-        print(f"  Speaker {utt.speaker} [{utt.start/1000:.1f}→{utt.end/1000:.1f}s]: {utt.text[:50]}")
+        print(f"  Spk {utt.speaker} [{utt.start/1000:.1f}→{utt.end/1000:.1f}s]: {utt.text[:55]}")
 
     print(f"✅ {len(segments)} сегментов, спикеры: {set(s['speaker'] for s in segments)}")
     return segments
 
 
 # ─────────────────────────────────────────────
-# Шаг 2b: Определяем пол каждого спикера
-# по частоте голоса (pitch)
+# Шаг 2b: Определение пола через Groq
 # ─────────────────────────────────────────────
 
 def detect_speaker_genders_ai(segments: list, groq_api_key: str) -> dict:
-    """
-    Groq анализирует весь разговор и определяет пол каждого спикера.
-    Смотрит на контекст, имена, местоимения, стиль речи.
-    """
-    print("👥 Groq определяет пол спикеров по контексту разговора...")
-
-    client = Groq(api_key=groq_api_key)
-
-    # Строим полный диалог с метками спикеров
-    dialog = "\n".join([
-        f"Speaker {s['speaker']}: {s['text']}"
-        for s in segments
-    ])
-
+    print("👥 Определяю пол спикеров...")
+    client   = Groq(api_key=groq_api_key)
+    dialog   = "\n".join([f"Speaker {s['speaker']}: {s['text']}" for s in segments])
     speakers = list(set(s['speaker'] for s in segments))
 
     try:
@@ -143,73 +119,70 @@ def detect_speaker_genders_ai(segments: list, groq_api_key: str) -> dict:
             messages=[
                 {
                     "role": "system",
-                    "content": """You are an expert at detecting speaker gender from conversation context.
-Analyze the conversation and determine the gender of each speaker.
-Look for: pronouns (he/she/his/her/I/me), names, topics discussed, speaking style.
-Reply ONLY with valid JSON: {"A": "male", "B": "female"}
-If unsure, make your best guess based on context."""
+                    "content": """Detect gender for each speaker from conversation.
+Look for pronouns, names, topics, speaking style.
+Reply ONLY with JSON: {"A": "male", "B": "female"}
+Make best guess if unsure."""
                 },
                 {
                     "role": "user",
-                    "content": f"Determine gender for each speaker in this conversation:\n\n{dialog}\n\nSpeakers to identify: {speakers}"
+                    "content": f"Conversation:\n{dialog}\n\nIdentify gender for: {speakers}"
                 }
             ],
             response_format={"type": "json_object"}
         )
 
-        result = json.loads(r.choices[0].message.content)
-        # Нормализуем ответ
+        result  = json.loads(r.choices[0].message.content)
         genders = {}
         for spk in speakers:
-            gender = result.get(spk, "male").lower()
-            if "female" in gender or "woman" in gender or "girl" in gender:
-                genders[spk] = "female"
-            else:
-                genders[spk] = "male"
+            g = result.get(spk, "male").lower()
+            genders[spk] = "female" if any(w in g for w in ["female", "woman", "girl"]) else "male"
             icon = "👩" if genders[spk] == "female" else "👨"
             print(f"  Speaker {spk} → {icon} {genders[spk]}")
-
         return genders
 
     except Exception as e:
-        print(f"  ⚠️ Groq gender detection failed: {e}")
-        # Фолбэк: первый спикер мужчина, второй женщина
-        genders = {}
-        for i, spk in enumerate(sorted(speakers)):
-            genders[spk] = "female" if i % 2 == 1 else "male"
-        return genders
+        print(f"  ⚠️ {e} — используем alternating")
+        return {spk: ("female" if i % 2 == 1 else "male")
+                for i, spk in enumerate(sorted(speakers))}
 
 
 # ─────────────────────────────────────────────
-# Шаг 3: Перевод через Groq
+# Шаг 3: Умный перевод с контекстом
 # ─────────────────────────────────────────────
 
 def translate_segments(segments: list, groq_api_key: str) -> list:
-    print("🌐 Перевожу на узбекский...")
-    client    = Groq(api_key=groq_api_key)
-    full_text = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
+    print("🌐 Перевожу на узбекский (с контекстом)...")
+    client = Groq(api_key=groq_api_key)
+
+    # Строим полный контекст из всех реплик
+    full_context = " ".join([s["text"] for s in segments])
+    prompt = build_translate_prompt(full_context)
+
+    # Переводим всё одним запросом
+    numbered = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
 
     r = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": TRANSLATE_PROMPT},
-            {"role": "user",   "content": f"Tarjima qil:\n{full_text}"}
+            {"role": "system", "content": prompt},
+            {"role": "user",   "content": f"Tarjima qil:\n{numbered}"}
         ]
     )
 
-    translated_map = {}
+    tmap = {}
     for line in r.choices[0].message.content.strip().split("\n"):
         line = line.strip()
         if line and line[0].isdigit() and ". " in line:
-            num, txt = line.split(". ", 1)
             try:
-                translated_map[int(num)] = txt.strip()
+                num, txt = line.split(". ", 1)
+                tmap[int(num)] = txt.strip()
             except:
                 pass
 
     result = []
     for i, seg in enumerate(segments):
-        uz = translated_map.get(i + 1, seg["text"])
+        uz = tmap.get(i + 1, seg["text"])
         result.append({
             "start":      seg["start"],
             "end":        seg["end"],
@@ -220,25 +193,17 @@ def translate_segments(segments: list, groq_api_key: str) -> list:
             "duration":   seg["end"] - seg["start"],
         })
         icon = "👩" if seg.get("gender") == "female" else "👨"
-        print(f"  {icon} Spk{seg.get('speaker','A')}: {seg['text'][:30]} → {uz[:40]}")
+        print(f"  {icon} {seg['text'][:30]:30} → {uz[:40]}")
 
     print("✅ Перевод готов!")
     return result
 
 
 # ─────────────────────────────────────────────
-# Шаг 4: TTS с правильным голосом
+# Шаг 4: TTS с синхронизацией и просодией
 # ─────────────────────────────────────────────
 
-async def generate_tts_segment(seg: dict, out_path: str):
-    voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
-    text  = normalize(seg["translated"])
-    tts   = edge_tts.Communicate(text=text, voice=voice, rate=TTS_RATE)
-    await tts.save(out_path)
-
-
 def get_duration(path: str) -> float:
-    """Длительность аудио файла через ffprobe"""
     r = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", path],
         capture_output=True, text=True
@@ -252,86 +217,83 @@ def get_duration(path: str) -> float:
     return 1.0
 
 
-def fit_audio_to_duration(in_path: str, out_path: str, target_dur: float):
-    """
-    Подгоняет аудио под нужную длительность через atempo.
-    Если TTS длиннее оригинала — ускоряем чтобы вписаться.
-    Если короче — оставляем (пауза естественна).
-    """
+def fit_to_duration(in_path: str, out_path: str, target: float):
+    """Подгоняет TTS под длину оригинального сегмента через atempo"""
     tts_dur = get_duration(in_path)
     if tts_dur <= 0:
-        os.rename(in_path, out_path)
+        try: os.rename(in_path, out_path)
+        except: pass
         return
 
-    ratio = tts_dur / target_dur
+    ratio = tts_dur / target
 
-    if ratio > 1.1:
-        # TTS длиннее оригинала → ускоряем но не более чем 1.8x
-        tempo = min(ratio, 1.8)
-        tempo = max(tempo, 0.8)
-        cmd = [
-            "ffmpeg", "-i", in_path,
-            "-filter:a", f"atempo={tempo:.3f}",
-            "-y", out_path
-        ]
-        r = subprocess.run(cmd, capture_output=True)
-        if r.returncode == 0:
-            try: os.remove(in_path)
-            except: pass
-            return
-    # Оставляем как есть
-    try:
-        os.rename(in_path, out_path)
-    except:
-        pass
+    if 0.85 <= ratio <= 1.15:
+        # Близко к оригиналу — не трогаем
+        try: os.rename(in_path, out_path)
+        except: pass
+        return
+
+    # Нужно ускорить или замедлить
+    tempo = max(0.75, min(ratio, 1.9))
+
+    cmd = ["ffmpeg", "-i", in_path,
+           "-filter:a", f"atempo={tempo:.3f}",
+           "-y", out_path]
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode == 0:
+        try: os.remove(in_path)
+        except: pass
+    else:
+        try: os.rename(in_path, out_path)
+        except: pass
 
 
 async def generate_all_tts(segments: list, temp_dir: str,
-                           orig_audio_path: str = None) -> list:
-    print("🎤 Генерирую голос (с переносом интонации)...")
+                            orig_audio_path: str = None) -> list:
+    print("🎤 Генерирую голос (синхронизация + просодия)...")
 
     orig_data, orig_sr = None, 16000
     if orig_audio_path and os.path.exists(orig_audio_path):
         try:
             orig_data, orig_sr = load_audio(orig_audio_path)
-            print("  ✅ Оригинал загружен для анализа интонации")
+            print("  ✅ Аудио оригинала загружено")
         except Exception as e:
-            print(f"  ⚠️ Не удалось загрузить оригинал: {e}")
+            print(f"  ⚠️ {e}")
 
     result = []
     for i, seg in enumerate(segments):
-        raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.mp3")
-        out_path = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
+        raw  = os.path.join(temp_dir, f"seg_{i:04d}_raw.mp3")
+        fit  = os.path.join(temp_dir, f"seg_{i:04d}_fit.mp3")
+        out  = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
 
         voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
         text  = normalize(seg["translated"])
+        pitch = "-5Hz" if seg["gender"] == "male" else "+2Hz"
 
-        # Мужской голос — делаем чуть ниже через pitch
-        if seg["gender"] == "male":
-            tts = edge_tts.Communicate(text=text, voice=voice,
-                                        rate=TTS_RATE, pitch="-4Hz")
-        else:
-            tts = edge_tts.Communicate(text=text, voice=voice,
-                                        rate=TTS_RATE, pitch="+0Hz")
-        await tts.save(raw_path)
+        # 1. Генерируем TTS
+        tts = edge_tts.Communicate(text=text, voice=voice,
+                                    rate=TTS_RATE, pitch=pitch)
+        await tts.save(raw)
 
+        # 2. Подгоняем под длину оригинала
+        fit_to_duration(raw, fit, seg["duration"])
+
+        # 3. Переносим просодию из оригинала
         if orig_data is not None:
             try:
-                orig_stats = analyze_segment_prosody(
-                    orig_data, orig_sr, seg["start"], seg["end"]
-                )
-                apply_prosody(raw_path, out_path, orig_stats)
-            except Exception as e:
-                print(f"  ⚠️ Просодия не применена: {e}")
-                try: os.rename(raw_path, out_path)
+                stats = analyze_segment_prosody(orig_data, orig_sr,
+                                                 seg["start"], seg["end"])
+                apply_prosody(fit, out, stats)
+            except:
+                try: os.rename(fit, out)
                 except: pass
         else:
-            try: os.rename(raw_path, out_path)
+            try: os.rename(fit, out)
             except: pass
 
         icon = "👩" if seg["gender"] == "female" else "👨"
-        print(f"  [{i+1}/{len(segments)}] {icon} {seg['translated'][:45]}")
-        result.append({**seg, "audio_file": out_path})
+        print(f"  [{i+1}/{len(segments)}] {icon} {seg['translated'][:50]}")
+        result.append({**seg, "audio_file": out})
 
     print("✅ TTS готов!")
     return result
@@ -358,8 +320,8 @@ def create_dubbed_video(original_video: str, segments: list,
 
     for i, seg in enumerate(segments):
         inputs += ["-i", seg["audio_file"]]
-        # +150ms задержка чтобы голос не опережал видео
-        delay = int(seg["start"] * 1000) + 150
+        # Точная задержка по времени сегмента (без искусственного сдвига)
+        delay = int(seg["start"] * 1000)
         lbl   = f"s{i}"
         filters.append(
             f"[{i+1}:a]adelay={delay}|{delay},volume={TTS_VOLUME}[{lbl}]"
@@ -397,40 +359,34 @@ async def dub_video(video_path: str, output_path: str, groq_api_key: str,
 
     assemblyai_key = os.environ.get("ASSEMBLYAI_API_KEY", "")
     if not assemblyai_key:
-        raise Exception("ASSEMBLYAI_API_KEY не найден! Запусти: export ASSEMBLYAI_API_KEY='твой_ключ'")
+        raise Exception("ASSEMBLYAI_API_KEY топилмади! export ASSEMBLYAI_API_KEY='...'")
 
     print(f"\n🎬 Дублирую: {video_path}")
     print("=" * 55)
 
     with tempfile.TemporaryDirectory() as tmp:
 
-        # 1. Аудио
         print("\n📢 1/5 Извлекаю аудио...")
         audio = os.path.join(tmp, "audio.wav")
         extract_audio(video_path, audio)
 
-        # 2. Транскрипция + диаризация
-        print("\n📝 2/5 AssemblyAI: транскрипция + спикеры...")
+        print("\n📝 2/5 Транскрибирую (AssemblyAI)...")
         lang = src_language if src_language and src_language != "auto" else None
         segs = transcribe_with_diarization(audio, assemblyai_key, lang)
         if not segs:
-            raise Exception("Речь не найдена")
+            raise Exception("Речь не найдена в видео")
 
-        # 2b. Пол каждого спикера через Groq AI
-        print("\n👥 Groq определяет пол спикеров...")
-        speaker_genders = detect_speaker_genders_ai(segs, groq_api_key)
+        print("\n👥 Определяю пол спикеров (Groq)...")
+        genders = detect_speaker_genders_ai(segs, groq_api_key)
         for seg in segs:
-            seg["gender"] = speaker_genders.get(seg["speaker"], "male")
+            seg["gender"] = genders.get(seg["speaker"], "male")
 
-        # 3. Перевод
-        print("\n🌐 3/5 Перевожу (Groq)...")
+        print("\n🌐 3/5 Перевожу (Groq + контекст)...")
         translated = translate_segments(segs, groq_api_key)
 
-        # 4. TTS с переносом интонации
-        print("\n🎤 4/5 Генерирую голос (интонация оригинала)...")
+        print("\n🎤 4/5 Генерирую голос (TTS + синхронизация)...")
         audio_segs = await generate_all_tts(translated, tmp, audio)
 
-        # 5. Видео
         print("\n🎬 5/5 Собираю видео (ffmpeg)...")
         create_dubbed_video(video_path, audio_segs, output_path)
 

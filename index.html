@@ -225,15 +225,15 @@
     🚀 Dublyaj qilish
   </button>
 
-  <!-- ПРОГРЕСС -->
   <div class="progress-box" id="progressBox">
     <div class="progress-title">⏳ <span id="progressMsg">Ishlanmoqda...</span></div>
     <div class="steps">
       <div class="step" id="step1"><div class="step-icon">📢</div> Audio ajratilmoqda...</div>
-      <div class="step" id="step2"><div class="step-icon">📝</div> Nutq tanib olinmoqda (Whisper)...</div>
-      <div class="step" id="step3"><div class="step-icon">🌐</div> O'zbek tiliga tarjima qilinmoqda...</div>
-      <div class="step" id="step4"><div class="step-icon">🎤</div> Ovoz yaratilmoqda (TTS)...</div>
-      <div class="step" id="step5"><div class="step-icon">🎬</div> Video yig'ilmoqda...</div>
+      <div class="step" id="step2"><div class="step-icon">📝</div> Nutq tanib olinmoqda (AssemblyAI)...</div>
+      <div class="step" id="step3"><div class="step-icon">👥</div> Spiker jinsi aniqlanmoqda...</div>
+      <div class="step" id="step4"><div class="step-icon">🌐</div> O'zbek tiliga tarjima qilinmoqda...</div>
+      <div class="step" id="step5"><div class="step-icon">🎤</div> Ovoz yaratilmoqda (TTS)...</div>
+      <div class="step" id="step6"><div class="step-icon">🎬</div> Video yig'ilmoqda...</div>
     </div>
   </div>
 
@@ -243,6 +243,7 @@
   <!-- РЕЗУЛЬТАТ -->
   <div class="result-box" id="resultBox">
     <h3>🎉 Tayyor!</h3>
+    <p id="resultInfo" style="color:rgba(255,255,255,0.6);font-size:0.85rem;margin-bottom:14px;"></p>
     <video id="resultVideo" controls></video>
     <br>
     <a class="dl-btn" id="downloadBtn" href="#" download>⬇️ Yuklab olish</a>
@@ -341,28 +342,43 @@
   }
 
   let lastMsg = '';
+  let lastStep = 0;
   async function pollStatus() {
     if (!currentTaskId) return;
     try {
       const res  = await fetch(`http://localhost:8000/status/${currentTaskId}`);
       const data = await res.json();
 
-      const msg = data.message || '';
-      if (msg !== lastMsg) {
-        lastMsg = msg;
+      const msg  = data.message || '';
+      const step = data.step || 0;
+
+      if (msg !== lastMsg || step !== lastStep) {
+        lastMsg  = msg;
+        lastStep = step;
         document.getElementById('progressMsg').textContent = msg;
-        // Обновляем шаги по сообщению
-        if (msg.includes('аудио') || msg.includes('Извлека')) { setStep(1,'active'); }
-        if (msg.includes('Транскри') || msg.includes('Whisper')) { setStep(1,'done'); setStep(2,'active'); }
-        if (msg.includes('Перево')) { setStep(2,'done'); setStep(3,'active'); }
-        if (msg.includes('TTS') || msg.includes('голос')) { setStep(3,'done'); setStep(4,'active'); }
-        if (msg.includes('видео') || msg.includes('Собира')) { setStep(4,'done'); setStep(5,'active'); }
+
+        // Обновляем шаги
+        const stepMap = {
+          '📢': 1, 'аудио': 1,
+          '📝': 2, 'Транскри': 2, 'AssemblyAI': 2,
+          '👥': 3, 'пол': 3,
+          '🌐': 4, 'Перево': 4,
+          '🎤': 5, 'голос': 5, 'TTS': 5,
+          '🎬': 6, 'видео': 6, 'Собира': 6,
+        };
+        for (const [key, n] of Object.entries(stepMap)) {
+          if (msg.includes(key)) {
+            for (let i = 1; i < n; i++) setStep(i, 'done');
+            setStep(n, 'active');
+            break;
+          }
+        }
       }
 
       if (data.status === 'done') {
         clearInterval(pollInterval);
-        [1,2,3,4,5].forEach(n => setStep(n,'done'));
-        showResult();
+        [1,2,3,4,5,6].forEach(n => setStep(n, 'done'));
+        showResult(data);
       } else if (data.status === 'error') {
         clearInterval(pollInterval);
         showError(data.message);
@@ -371,10 +387,15 @@
     } catch(e) {}
   }
 
-  function showResult() {
-    document.getElementById('progressBox').style.display = 'none';
-    document.getElementById('resultBox').style.display   = 'block';
+  function showResult(data) {
+    document.getElementById('progressBox').style.display  = 'none';
+    document.getElementById('resultBox').style.display    = 'block';
     document.getElementById('dubBtn').disabled = false;
+
+    const info = document.getElementById('resultInfo');
+    if (info && data.segment_count) {
+      info.textContent = `✅ ${data.segment_count} ta segment dublyaj qilindi`;
+    }
 
     const videoEl = document.getElementById('resultVideo');
     const dlBtn   = document.getElementById('downloadBtn');

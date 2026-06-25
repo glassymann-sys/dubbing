@@ -81,10 +81,24 @@ async def tts(req: TTSRequest):
 
 async def run_dubbing(task_id: str, video_path: str, output_path: str,
                       groq_api_key: str, voice: str, src_language: str):
-    """Фоновая задача дублирования"""
     try:
-        tasks[task_id]["status"] = "processing"
-        tasks[task_id]["message"] = "Обрабатываю видео..."
+        steps = [
+            "📢 Извлекаю аудио...",
+            "📝 Транскрибирую речь (AssemblyAI)...",
+            "👥 Определяю пол спикеров...",
+            "🌐 Перевожу на узбекский (Groq)...",
+            "🎤 Генерирую голос (TTS)...",
+            "🎬 Собираю финальное видео...",
+        ]
+        tasks[task_id]["status"]  = "processing"
+        tasks[task_id]["message"] = steps[0]
+        tasks[task_id]["step"]    = 1
+        tasks[task_id]["total"]   = len(steps)
+
+        import dubber as db
+
+        # Патчим print чтобы обновлять статус
+        orig_print = __builtins__["print"] if isinstance(__builtins__, dict) else print
 
         result = await dub_video(
             video_path=video_path,
@@ -94,10 +108,11 @@ async def run_dubbing(task_id: str, video_path: str, output_path: str,
             src_language=src_language if src_language != "auto" else None,
         )
 
-        tasks[task_id]["status"]   = "done"
-        tasks[task_id]["message"]  = "Готово!"
-        tasks[task_id]["output"]   = str(output_path)
-        tasks[task_id]["segments"] = result["segments"]
+        tasks[task_id]["status"]        = "done"
+        tasks[task_id]["message"]       = "✅ Tayyor!"
+        tasks[task_id]["step"]          = len(steps)
+        tasks[task_id]["output"]        = str(output_path)
+        tasks[task_id]["segments"]      = result["segments"]
         tasks[task_id]["segment_count"] = result["segment_count"]
 
     except Exception as e:
