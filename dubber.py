@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-# -*- coding: utf-8 -*-
 """
-AI Video Dubber v5 — Gemini TTS
-Видео → AssemblyAI → Groq → Gemini TTS (Puck/Leda) → ffmpeg
+AI Video Dubber v6
+Видео → AssemblyAI → Gemini (перевод) → Gemini TTS (Puck/Leda) → ffmpeg
 """
 
 import os
+import re
 import asyncio
 import tempfile
 import subprocess
@@ -21,38 +21,33 @@ from text_normalizer import normalize
 from prosody import load_audio, analyze_segment_prosody, apply_prosody
 
 # ─────────────────────────────────────────────
-VOICE_FEMALE = "Leda"   # Gemini TTS — женский (понравился)
-VOICE_MALE   = "Puck"   # Gemini TTS — мужской (понравился)
+VOICE_FEMALE = "Leda"   # Gemini TTS женский
+VOICE_MALE   = "Puck"   # Gemini TTS мужской
 ORIG_VOLUME  = 0.08
 TTS_VOLUME   = 2.5
 GEMINI_MODEL = "gemini-3.1-flash-tts-preview"
 
 # ─────────────────────────────────────────────
-# Промпт перевода — с контекстом
+# Промпт перевода — СТРОГО слово в слово
 # ─────────────────────────────────────────────
-def build_translate_prompt(full_context: str) -> str:
-    return f"""Sen professional dublyaj tarjimonisin. Quyidagi video matnini aniq va tabiiy o'zbek tiliga tarjima qil.
+TRANSLATE_PROMPT = """Sen professional dublyaj tarjimonisin.
 
-VIDEO KONTEKSTI (umumiy tushunish uchun):
-{full_context}
+MUHIM: Matnni SO'ZMA-SO'Z, AYNAN tarjima qil!
+- Biror so'z qo'shma, biror so'z o'chirma
+- Ma'noni o'zgartirma, gapni qayta yozma
+- Faqat o'zbek tiliga mos shaklga o'tkaz
+- His-tuyg'u, intonatsiya, savol belgilarini saqlagan holda tarjima qil
+- O'zbek tilida ekvivalenti bo'lmagan so'zlarni aslida qoldur (gay, OK, wow va h.k.)
+- Faqat tarjima matnini yoz — hech qanday izoh yo'q
+- Har bir raqamli qatorni raqami bilan yoz
 
-QOIDALAR:
-1. Har bir gapni SO'ZMA-SO'Z tarjima qil — ma'noni o'zgartirma
-2. Adabiy o'zbek tili — TV diktoridek, lekin tabiiy va jonli
-3. His-tuyg'ularni saqlagan holda tarjima qil (hayrat, kulgu, g'azab va h.k.)
-4. Savol → savol, undov → undov shaklida tarjima qil
-5. O'zbek tilida to'liq ekvivalenti bo'lmagan so'zlarni aslida qoldur (gay, OK, wow va h.k.)
-6. Faqat tarjima matnini yoz — hech qanday izoh yo'q
-7. Har bir raqamli qatorni raqami bilan yoz
-8. Tinish belgilarini saqlagan holda tarjima qil
+MISOL TO'G'RI:
+Kirdi:  "1. I was watching you from over there with binoculars"
+Chiqdi: "1. Men sizni u tomondan durbin bilan kuzatib turgan edim"
 
-MISOL:
-Kirdi:  "1. Oh wow, would you really go on a date with me?!"
-Chiqdi: "1. Voy, haqiqatan ham men bilan uchrashuvga borarmidingiz?!"
-
-Kirdi:  "2. That's crazy, no way!"
-Chiqdi: "2. Bu aqldan tashqari, yo'q!"
-"""
+MISOL NOTO'G'RI (bunday qilma!):
+Kirdi:  "1. I was watching you from over there with binoculars"
+Chiqdi: "1. Men sizni kuzatmoqda edim" — noto'g'ri, qisqartirilgan!"""
 
 
 # ─────────────────────────────────────────────
@@ -92,12 +87,10 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
 
     segments = []
 
-    # Если AssemblyAI дал мало сегментов (1-2) — разбиваем по предложениям
+    # Если мало сегментов — разбиваем по предложениям
     if len(transcript.utterances) <= 2:
         print("  ⚠️ Мало сегментов — разбиваю по предложениям...")
         for utt in transcript.utterances:
-            # Разбиваем текст на предложения по знакам препинания
-            import re
             sentences = re.split(r'(?<=[.!?,])\s+', utt.text.strip())
             total_dur = (utt.end - utt.start) / 1000.0
             per_sent  = total_dur / max(len(sentences), 1)
@@ -109,8 +102,8 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
                 seg_start = utt.start / 1000.0 + j * per_sent
                 seg_end   = seg_start + per_sent
                 segments.append({
-                    "start":   seg_start,
-                    "end":     seg_end,
+                    "start":   round(seg_start, 3),
+                    "end":     round(seg_end, 3),
                     "text":    sent,
                     "speaker": utt.speaker,
                     "gender":  "male"
@@ -119,8 +112,8 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
     else:
         for utt in transcript.utterances:
             segments.append({
-                "start":   utt.start / 1000.0,
-                "end":     utt.end   / 1000.0,
+                "start":   round(utt.start / 1000.0, 3),
+                "end":     round(utt.end   / 1000.0, 3),
                 "text":    utt.text.strip(),
                 "speaker": utt.speaker,
                 "gender":  "male"
@@ -132,13 +125,11 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
 
 
 # ─────────────────────────────────────────────
-# Шаг 2b: Определение пола через Gemini
+# Шаг 2b: Gemini определяет пол спикеров
 # ─────────────────────────────────────────────
 
 def detect_speaker_genders_ai(segments: list, groq_api_key: str) -> dict:
-    """Gemini определяет пол каждого спикера по контексту разговора"""
     print("👥 Gemini определяет пол спикеров...")
-
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     dialog     = "\n".join([f"Speaker {s['speaker']}: {s['text']}" for s in segments])
     speakers   = list(set(s['speaker'] for s in segments))
@@ -148,17 +139,14 @@ def detect_speaker_genders_ai(segments: list, groq_api_key: str) -> dict:
         r = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=f"""Analyze this conversation and detect the gender of each speaker.
-Look for: pronouns (he/she/his/her), names, topics, speaking style, context clues.
-
+Look for pronouns (he/she/his/her), names, topics, context clues.
 Conversation:
 {dialog}
-
-Speakers to identify: {speakers}
-
-Reply ONLY with valid JSON like: {{"A": "male", "B": "female"}}
-Make your best guess if unsure."""
+Speakers: {speakers}
+Reply ONLY with valid JSON like: {{"A": "male", "B": "female"}}"""
         )
-        result  = json.loads(r.text.strip().replace("```json","").replace("```","").strip())
+        text = r.text.strip().replace("```json", "").replace("```", "").strip()
+        result  = json.loads(text)
         genders = {}
         for spk in speakers:
             g = result.get(spk, "male").lower()
@@ -166,17 +154,15 @@ Make your best guess if unsure."""
             icon = "👩" if genders[spk] == "female" else "👨"
             print(f"  Speaker {spk} → {icon} {genders[spk]}")
         return genders
-
     except Exception as e:
         print(f"  ⚠️ Gemini gender error: {e} — Groq fallback")
-        # Фолбэк через Groq
         try:
             groq = Groq(api_key=groq_api_key)
             r2 = groq.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": "Detect gender for each speaker. Reply ONLY with JSON: {\"A\": \"male\", \"B\": \"female\"}"},
-                    {"role": "user",   "content": f"{dialog}\n\nIdentify: {speakers}"}
+                    {"role": "user", "content": f"{dialog}\n\nIdentify: {speakers}"}
                 ],
                 response_format={"type": "json_object"}
             )
@@ -194,38 +180,19 @@ Make your best guess if unsure."""
 
 
 # ─────────────────────────────────────────────
-# Шаг 3: Умный перевод с контекстом
+# Шаг 3: Перевод через Gemini (строго)
 # ─────────────────────────────────────────────
 
 def translate_segments(segments: list, groq_api_key: str) -> list:
-    """Gemini переводит — качество намного лучше"""
-    print("🌐 Перевожу через Gemini (лучшее качество)...")
-
-    gemini_key   = os.environ.get("GEMINI_API_KEY", "")
-    full_context = " ".join([s["text"] for s in segments])
-    numbered     = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
-
-    PROMPT = f"""Sen professional dublyaj tarjimonisin. Video matnini aniq va tabiiy o'zbek tiliga tarjima qil.
-
-VIDEO KONTEKSTI: {full_context}
-
-QOIDALAR:
-1. Har bir gapni SO'ZMA-SO'Z tarjima qil — ma'noni o'zgartirma
-2. Adabiy o'zbek tili — TV diktoridek, lekin jonli va tabiiy
-3. His-tuyg'ularni saqlagan holda tarjima qil
-4. Savol → savol, undov → undov shaklida
-5. O'zbek tilida ekvivalenti bo'lmagan so'zlarni aslida qoldur
-6. FAQAT tarjima matnini yoz — hech qanday izoh yo'q
-7. Har bir raqamli qatorni raqami bilan yoz
-
-Tarjima qil:
-{numbered}"""
+    print("🌐 Перевожу через Gemini (строго слово в слово)...")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    numbered   = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
 
     try:
         client = genai.Client(api_key=gemini_key)
         r = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=PROMPT
+            contents=f"{TRANSLATE_PROMPT}\n\nTarjima qil:\n{numbered}"
         )
         response_text = r.text
     except Exception as e:
@@ -234,7 +201,7 @@ Tarjima qil:
         r2 = groq.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": PROMPT},
+                {"role": "system", "content": TRANSLATE_PROMPT},
                 {"role": "user",   "content": f"Tarjima qil:\n{numbered}"}
             ]
         )
@@ -254,13 +221,13 @@ Tarjima qil:
     for i, seg in enumerate(segments):
         uz = tmap.get(i + 1, seg["text"])
         result.append({
-            "start":      seg["start"],
-            "end":        seg["end"],
-            "original":   seg["text"],
+            "start":    seg["start"],
+            "end":      seg["end"],
+            "original": seg["text"],
             "translated": uz,
-            "speaker":    seg.get("speaker", "A"),
-            "gender":     seg.get("gender", "male"),
-            "duration":   seg["end"] - seg["start"],
+            "speaker":  seg.get("speaker", "A"),
+            "gender":   seg.get("gender", "male"),
+            "duration": seg["end"] - seg["start"],
         })
         icon = "👩" if seg.get("gender") == "female" else "👨"
         print(f"  {icon} {seg['text'][:30]:30} → {uz[:40]}")
@@ -270,7 +237,7 @@ Tarjima qil:
 
 
 # ─────────────────────────────────────────────
-# Шаг 4: TTS с синхронизацией и просодией
+# Шаг 4: Gemini TTS — синхронизация
 # ─────────────────────────────────────────────
 
 def get_duration(path: str) -> float:
@@ -288,11 +255,7 @@ def get_duration(path: str) -> float:
 
 
 def fit_to_duration(in_path: str, out_path: str, target: float):
-    """
-    Подгоняет TTS под длину оригинала.
-    МЯГКИЙ режим — ускоряем максимум на 20%, не больше.
-    Если TTS намного длиннее — просто обрезаем конец (пауза).
-    """
+    """Подгоняет TTS строго под длину оригинала"""
     tts_dur = get_duration(in_path)
     if tts_dur <= 0:
         try: os.rename(in_path, out_path)
@@ -301,19 +264,30 @@ def fit_to_duration(in_path: str, out_path: str, target: float):
 
     ratio = tts_dur / target
 
-    if ratio <= 1.2:
-        # TTS короче или немного длиннее — не трогаем, звучит естественно
+    if 0.92 <= ratio <= 1.08:
         try: os.rename(in_path, out_path)
         except: pass
         return
 
-    # TTS длиннее более чем на 20% — слегка ускоряем max 1.35x
-    tempo = min(ratio * 0.9, 1.35)
-    tempo = max(tempo, 0.95)
+    # atempo диапазон 0.5-2.0 — если больше применяем дважды
+    if ratio > 1.8:
+        mid = in_path + "_mid.wav"
+        r1 = subprocess.run(
+            ["ffmpeg", "-i", in_path, "-filter:a", "atempo=1.8", "-y", mid],
+            capture_output=True
+        )
+        if r1.returncode == 0:
+            r2 = subprocess.run(
+                ["ffmpeg", "-i", mid, "-filter:a", f"atempo={ratio/1.8:.3f}", "-y", out_path],
+                capture_output=True
+            )
+            try: os.remove(in_path); os.remove(mid)
+            except: pass
+            if r2.returncode == 0:
+                return
 
-    cmd = ["ffmpeg", "-i", in_path,
-           "-filter:a", f"atempo={tempo:.3f}",
-           "-y", out_path]
+    tempo = max(0.5, min(ratio, 2.0))
+    cmd = ["ffmpeg", "-i", in_path, "-filter:a", f"atempo={tempo:.3f}", "-y", out_path]
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode == 0:
         try: os.remove(in_path)
@@ -325,11 +299,10 @@ def fit_to_duration(in_path: str, out_path: str, target: float):
 
 async def generate_all_tts(segments: list, temp_dir: str,
                             orig_audio_path: str = None) -> list:
-    print("🎤 Генерирую голос (Gemini TTS)...")
-
+    print("🎤 Генерирую голос (Gemini TTS Puck/Leda)...")
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
-        raise Exception("GEMINI_API_KEY не найден! export GEMINI_API_KEY='...'")
+        raise Exception("GEMINI_API_KEY не найден!")
 
     client = genai.Client(api_key=gemini_key)
 
@@ -337,32 +310,22 @@ async def generate_all_tts(segments: list, temp_dir: str,
     if orig_audio_path and os.path.exists(orig_audio_path):
         try:
             orig_data, orig_sr = load_audio(orig_audio_path)
-            print("  ✅ Аудио оригинала загружено")
         except Exception as e:
             print(f"  ⚠️ {e}")
 
     result = []
     for i, seg in enumerate(segments):
-        raw  = os.path.join(temp_dir, f"seg_{i:04d}_raw.wav")
-        fit  = os.path.join(temp_dir, f"seg_{i:04d}_fit.wav")
-        out  = os.path.join(temp_dir, f"seg_{i:04d}.wav")
+        raw = os.path.join(temp_dir, f"seg_{i:04d}_raw.wav")
+        fit = os.path.join(temp_dir, f"seg_{i:04d}_fit.wav")
+        out = os.path.join(temp_dir, f"seg_{i:04d}.wav")
 
         voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
         text  = normalize(seg["translated"])
 
-        # Добавляем эмоциональные теги для живости
-        if seg["gender"] == "male":
-            # Мужской — уверенный, глубокий
-            styled_text = text
-        else:
-            # Женский — мягкий, естественный
-            styled_text = text
-
-        # Gemini TTS генерация с промптом для натуральности
         try:
             r = client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=f"Say this naturally and expressively as a native Uzbek speaker, with proper emotion and intonation. {'Deep confident male voice.' if seg['gender'] == 'male' else 'Warm natural female voice.'} Text: {styled_text}",
+                contents=text,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
@@ -375,15 +338,13 @@ async def generate_all_tts(segments: list, temp_dir: str,
                 ),
             )
             audio_data = r.candidates[0].content.parts[0].inline_data.data
-
             with wave.open(raw, 'wb') as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
                 wf.setframerate(24000)
                 wf.writeframes(audio_data)
-
         except Exception as e:
-            print(f"  ⚠️ Gemini TTS error: {e} — пропускаю сегмент")
+            print(f"  ⚠️ TTS error seg {i}: {e}")
             continue
 
         # Подгоняем под длину оригинала
@@ -411,7 +372,7 @@ async def generate_all_tts(segments: list, temp_dir: str,
 
 
 # ─────────────────────────────────────────────
-# Шаг 5: Сборка видео
+# Шаг 5: Сборка видео без перекрытий
 # ─────────────────────────────────────────────
 
 def create_dubbed_video(original_video: str, segments: list,
@@ -430,18 +391,23 @@ def create_dubbed_video(original_video: str, segments: list,
     labels  = []
 
     for i, seg in enumerate(segments):
+        if not os.path.exists(seg.get("audio_file", "")):
+            continue
         inputs += ["-i", seg["audio_file"]]
-        # Точная задержка по времени сегмента (без искусственного сдвига)
+        # Точная задержка по времени сегмента
         delay = int(seg["start"] * 1000)
         lbl   = f"s{i}"
         filters.append(
-            f"[{i+1}:a]adelay={delay}|{delay},volume={TTS_VOLUME}[{lbl}]"
+            f"[{len(labels)+1}:a]adelay={delay}|{delay},volume={TTS_VOLUME}[{lbl}]"
         )
         labels.append(f"[{lbl}]")
 
+    if not labels:
+        raise Exception("Нет аудио сегментов!")
+
     all_in = "[orig]" + "".join(labels)
     filters.append(
-        f"{all_in}amix=inputs={len(segments)+1}:normalize=0:dropout_transition=0[aout]"
+        f"{all_in}amix=inputs={len(labels)+1}:normalize=0:dropout_transition=0[aout]"
     )
 
     cmd = [
@@ -470,7 +436,7 @@ async def dub_video(video_path: str, output_path: str, groq_api_key: str,
 
     assemblyai_key = os.environ.get("ASSEMBLYAI_API_KEY", "")
     if not assemblyai_key:
-        raise Exception("ASSEMBLYAI_API_KEY топилмади! export ASSEMBLYAI_API_KEY='...'")
+        raise Exception("ASSEMBLYAI_API_KEY топилмади!")
 
     print(f"\n🎬 Дублирую: {video_path}")
     print("=" * 55)
@@ -487,15 +453,15 @@ async def dub_video(video_path: str, output_path: str, groq_api_key: str,
         if not segs:
             raise Exception("Речь не найдена в видео")
 
-        print("\n👥 Определяю пол спикеров (Groq)...")
+        print("\n👥 Определяю пол спикеров (Gemini)...")
         genders = detect_speaker_genders_ai(segs, groq_api_key)
         for seg in segs:
             seg["gender"] = genders.get(seg["speaker"], "male")
 
-        print("\n🌐 3/5 Перевожу (Groq + контекст)...")
+        print("\n🌐 3/5 Перевожу (Gemini)...")
         translated = translate_segments(segs, groq_api_key)
 
-        print("\n🎤 4/5 Генерирую голос (TTS + синхронизация)...")
+        print("\n🎤 4/5 Генерирую голос (Gemini TTS)...")
         audio_segs = await generate_all_tts(translated, tmp, audio)
 
         print("\n🎬 5/5 Собираю видео (ffmpeg)...")
