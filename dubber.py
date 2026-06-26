@@ -106,47 +106,65 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
 
 
 # ─────────────────────────────────────────────
-# Шаг 2b: Определение пола через Groq
+# Шаг 2b: Определение пола через Gemini
 # ─────────────────────────────────────────────
 
 def detect_speaker_genders_ai(segments: list, groq_api_key: str) -> dict:
-    print("👥 Определяю пол спикеров...")
-    client   = Groq(api_key=groq_api_key)
-    dialog   = "\n".join([f"Speaker {s['speaker']}: {s['text']}" for s in segments])
-    speakers = list(set(s['speaker'] for s in segments))
+    """Gemini определяет пол каждого спикера по контексту разговора"""
+    print("👥 Gemini определяет пол спикеров...")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    dialog     = "\n".join([f"Speaker {s['speaker']}: {s['text']}" for s in segments])
+    speakers   = list(set(s['speaker'] for s in segments))
 
     try:
-        r = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """Detect gender for each speaker from conversation.
-Look for pronouns, names, topics, speaking style.
-Reply ONLY with JSON: {"A": "male", "B": "female"}
-Make best guess if unsure."""
-                },
-                {
-                    "role": "user",
-                    "content": f"Conversation:\n{dialog}\n\nIdentify gender for: {speakers}"
-                }
-            ],
-            response_format={"type": "json_object"}
-        )
+        client = genai.Client(api_key=gemini_key)
+        r = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"""Analyze this conversation and detect the gender of each speaker.
+Look for: pronouns (he/she/his/her), names, topics, speaking style, context clues.
 
-        result  = json.loads(r.choices[0].message.content)
+Conversation:
+{dialog}
+
+Speakers to identify: {speakers}
+
+Reply ONLY with valid JSON like: {{"A": "male", "B": "female"}}
+Make your best guess if unsure."""
+        )
+        result  = json.loads(r.text.strip().replace("```json","").replace("```","").strip())
         genders = {}
         for spk in speakers:
             g = result.get(spk, "male").lower()
-            genders[spk] = "female" if any(w in g for w in ["female", "woman", "girl"]) else "male"
+            genders[spk] = "female" if any(w in g for w in ["female","woman","girl"]) else "male"
             icon = "👩" if genders[spk] == "female" else "👨"
             print(f"  Speaker {spk} → {icon} {genders[spk]}")
         return genders
 
     except Exception as e:
-        print(f"  ⚠️ {e} — используем alternating")
-        return {spk: ("female" if i % 2 == 1 else "male")
-                for i, spk in enumerate(sorted(speakers))}
+        print(f"  ⚠️ Gemini gender error: {e} — Groq fallback")
+        # Фолбэк через Groq
+        try:
+            groq = Groq(api_key=groq_api_key)
+            r2 = groq.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "Detect gender for each speaker. Reply ONLY with JSON: {\"A\": \"male\", \"B\": \"female\"}"},
+                    {"role": "user",   "content": f"{dialog}\n\nIdentify: {speakers}"}
+                ],
+                response_format={"type": "json_object"}
+            )
+            result  = json.loads(r2.choices[0].message.content)
+            genders = {}
+            for spk in speakers:
+                g = result.get(spk, "male").lower()
+                genders[spk] = "female" if "female" in g else "male"
+                icon = "👩" if genders[spk] == "female" else "👨"
+                print(f"  Speaker {spk} → {icon} {genders[spk]}")
+            return genders
+        except:
+            return {spk: ("female" if i % 2 == 1 else "male")
+                    for i, spk in enumerate(sorted(speakers))}
 
 
 # ─────────────────────────────────────────────
@@ -154,26 +172,50 @@ Make best guess if unsure."""
 # ─────────────────────────────────────────────
 
 def translate_segments(segments: list, groq_api_key: str) -> list:
-    print("🌐 Перевожу на узбекский (с контекстом)...")
-    client = Groq(api_key=groq_api_key)
+    """Gemini переводит — качество намного лучше"""
+    print("🌐 Перевожу через Gemini (лучшее качество)...")
 
-    # Строим полный контекст из всех реплик
+    gemini_key   = os.environ.get("GEMINI_API_KEY", "")
     full_context = " ".join([s["text"] for s in segments])
-    prompt = build_translate_prompt(full_context)
+    numbered     = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
 
-    # Переводим всё одним запросом
-    numbered = "\n".join([f"{i+1}. {s['text']}" for i, s in enumerate(segments)])
+    PROMPT = f"""Sen professional dublyaj tarjimonisin. Video matnini aniq va tabiiy o'zbek tiliga tarjima qil.
 
-    r = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user",   "content": f"Tarjima qil:\n{numbered}"}
-        ]
-    )
+VIDEO KONTEKSTI: {full_context}
+
+QOIDALAR:
+1. Har bir gapni SO'ZMA-SO'Z tarjima qil — ma'noni o'zgartirma
+2. Adabiy o'zbek tili — TV diktoridek, lekin jonli va tabiiy
+3. His-tuyg'ularni saqlagan holda tarjima qil
+4. Savol → savol, undov → undov shaklida
+5. O'zbek tilida ekvivalenti bo'lmagan so'zlarni aslida qoldur
+6. FAQAT tarjima matnini yoz — hech qanday izoh yo'q
+7. Har bir raqamli qatorni raqami bilan yoz
+
+Tarjima qil:
+{numbered}"""
+
+    try:
+        client = genai.Client(api_key=gemini_key)
+        r = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=PROMPT
+        )
+        response_text = r.text
+    except Exception as e:
+        print(f"  ⚠️ Gemini error: {e} — Groq fallback")
+        groq = Groq(api_key=groq_api_key)
+        r2 = groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": PROMPT},
+                {"role": "user",   "content": f"Tarjima qil:\n{numbered}"}
+            ]
+        )
+        response_text = r2.choices[0].message.content
 
     tmap = {}
-    for line in r.choices[0].message.content.strip().split("\n"):
+    for line in response_text.strip().split("\n"):
         line = line.strip()
         if line and line[0].isdigit() and ". " in line:
             try:
