@@ -71,7 +71,7 @@
     .status-err     { background: rgba(239,68,68,0.1);   color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
 
     /* Сегменты */
-    .segments-wrap { display: none; }
+    .segments-wrap { }  /* убрали display:none отсюда — теперь в HTML style */
     .seg-item {
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.08);
@@ -107,7 +107,7 @@
       transition: border-color 0.2s;
     }
     .seg-trans:focus { border-color: rgba(167,139,250,0.5); }
-    .result-box { display: none; }
+    .result-box { }  /* убрали display:none отсюда — теперь в HTML style */
     video { width: 100%; border-radius: 10px; margin-bottom: 12px; }
     .dl-btn {
       display: inline-block; padding: 10px 24px;
@@ -164,7 +164,7 @@
   </div>
 
   <!-- STEP 2: Edit translation -->
-  <div class="card segments-wrap" id="step2Card">
+  <div class="card" id="step2Card" style="display:none;">
     <h2>✏️ 2-qadam: Tarjimani tekshir va tahrirlang</h2>
     <p style="color:rgba(255,255,255,0.4);font-size:0.82rem;margin-bottom:16px;">
       AI avtomatik tarjima qildi. Xatolarni to'g'rilang, keyin "Dublyaj" tugmasini bosing.
@@ -177,7 +177,7 @@
   </div>
 
   <!-- RESULT -->
-  <div class="card result-box" id="resultCard">
+  <div class="card" id="resultCard" style="display:none;">
     <h2>🎉 Tayyor!</h2>
     <video id="resultVideo" controls></video>
     <a class="dl-btn" id="downloadBtn" href="#" download>⬇️ Yuklab olish</a>
@@ -252,8 +252,11 @@
         document.getElementById('transcribeBtn').disabled = false;
         currentSegments = data.segments || [];
         buildSegments(currentSegments);
-        document.getElementById('step2Card').style.display = 'block';
-        document.getElementById('step2Card').scrollIntoView({behavior:'smooth'});
+        const step2 = document.getElementById('step2Card');
+        step2.style.display = 'block';
+        step2.style.visibility = 'visible';
+        step2.style.opacity = '1';
+        setTimeout(() => step2.scrollIntoView({behavior:'smooth'}), 100);
       } else if (data.status === 'error') {
         clearInterval(pollInterval);
         showStatus('transcribeStatus','err','❌ ' + data.message);
