@@ -323,26 +323,47 @@ async def generate_all_tts(segments: list, temp_dir: str,
         text  = normalize(seg["translated"])
 
         try:
-            r = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice
-                            )
-                        )
-                    ),
-                ),
-            )
-            audio_data = r.candidates[0].content.parts[0].inline_data.data
+            # Retry до 3 раз с паузой при 429
+            audio_data = None
+            for attempt in range(3):
+                try:
+                    r = client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=text,
+                        config=types.GenerateContentConfig(
+                            response_modalities=["AUDIO"],
+                            speech_config=types.SpeechConfig(
+                                voice_config=types.VoiceConfig(
+                                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                        voice_name=voice
+                                    )
+                                )
+                            ),
+                        ),
+                    )
+                    audio_data = r.candidates[0].content.parts[0].inline_data.data
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        wait = 6 + attempt * 5  # 6, 11, 16 сек
+                        print(f"  ⏳ Rate limit — жду {wait} сек... (попытка {attempt+1}/3)")
+                        await asyncio.sleep(wait)
+                    else:
+                        raise e
+
+            if audio_data is None:
+                print(f"  ❌ Пропускаю сегмент {i} — лимит исчерпан")
+                continue
+
             with wave.open(raw, 'wb') as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
                 wf.setframerate(24000)
                 wf.writeframes(audio_data)
+
+            # Небольшая пауза между запросами чтобы не превысить лимит
+            await asyncio.sleep(6)
         except Exception as e:
             print(f"  ⚠️ TTS error seg {i}: {e}")
             continue
