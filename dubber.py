@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-AI Video Dubber v4 — улучшенная версия
-Видео → AssemblyAI → Groq (умный перевод) → Edge TTS (синхронизация) → ffmpeg
+AI Video Dubber v5 — Gemini TTS
+Видео → AssemblyAI → Groq → Gemini TTS (Puck/Leda) → ffmpeg
 """
 
 import os
@@ -13,17 +14,18 @@ import numpy as np
 import wave
 
 import assemblyai as aai
-import edge_tts
+from google import genai
+from google.genai import types
 from groq import Groq
 from text_normalizer import normalize
 from prosody import load_audio, analyze_segment_prosody, apply_prosody
 
 # ─────────────────────────────────────────────
-VOICE_FEMALE = "uz-UZ-MadinaNeural"
-VOICE_MALE   = "uz-UZ-SardorNeural"
-ORIG_VOLUME  = 0.08   # оригинал очень тихо на фоне
-TTS_VOLUME   = 2.5    # дублёр громче
-TTS_RATE     = "-12%"  # медленнее — более человечно
+VOICE_FEMALE = "Leda"   # Gemini TTS — женский (понравился)
+VOICE_MALE   = "Puck"   # Gemini TTS — мужской (понравился)
+ORIG_VOLUME  = 0.08
+TTS_VOLUME   = 2.5
+GEMINI_MODEL = "gemini-3.1-flash-tts-preview"
 
 # ─────────────────────────────────────────────
 # Промпт перевода — с контекстом
@@ -255,7 +257,13 @@ def fit_to_duration(in_path: str, out_path: str, target: float):
 
 async def generate_all_tts(segments: list, temp_dir: str,
                             orig_audio_path: str = None) -> list:
-    print("🎤 Генерирую голос (синхронизация + просодия)...")
+    print("🎤 Генерирую голос (Gemini TTS)...")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        raise Exception("GEMINI_API_KEY не найден! export GEMINI_API_KEY='...'")
+
+    client = genai.Client(api_key=gemini_key)
 
     orig_data, orig_sr = None, 16000
     if orig_audio_path and os.path.exists(orig_audio_path):
@@ -267,23 +275,45 @@ async def generate_all_tts(segments: list, temp_dir: str,
 
     result = []
     for i, seg in enumerate(segments):
-        raw  = os.path.join(temp_dir, f"seg_{i:04d}_raw.mp3")
-        fit  = os.path.join(temp_dir, f"seg_{i:04d}_fit.mp3")
-        out  = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
+        raw  = os.path.join(temp_dir, f"seg_{i:04d}_raw.wav")
+        fit  = os.path.join(temp_dir, f"seg_{i:04d}_fit.wav")
+        out  = os.path.join(temp_dir, f"seg_{i:04d}.wav")
 
         voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
         text  = normalize(seg["translated"])
-        pitch = "-5Hz" if seg["gender"] == "male" else "+2Hz"
 
-        # 1. Генерируем TTS
-        tts = edge_tts.Communicate(text=text, voice=voice,
-                                    rate=TTS_RATE, pitch=pitch)
-        await tts.save(raw)
+        # Gemini TTS генерация
+        try:
+            r = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice
+                            )
+                        )
+                    ),
+                ),
+            )
+            audio_data = r.candidates[0].content.parts[0].inline_data.data
 
-        # 2. Подгоняем под длину оригинала
+            with wave.open(raw, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(24000)
+                wf.writeframes(audio_data)
+
+        except Exception as e:
+            print(f"  ⚠️ Gemini TTS error: {e} — пропускаю сегмент")
+            continue
+
+        # Подгоняем под длину оригинала
         fit_to_duration(raw, fit, seg["duration"])
 
-        # 3. Переносим просодию из оригинала
+        # Переносим просодию
         if orig_data is not None:
             try:
                 stats = analyze_segment_prosody(orig_data, orig_sr,
@@ -297,7 +327,7 @@ async def generate_all_tts(segments: list, temp_dir: str,
             except: pass
 
         icon = "👩" if seg["gender"] == "female" else "👨"
-        print(f"  [{i+1}/{len(segments)}] {icon} {seg['translated'][:50]}")
+        print(f"  [{i+1}/{len(segments)}] {icon} {voice}: {seg['translated'][:45]}")
         result.append({**seg, "audio_file": out})
 
     print("✅ TTS готов!")
