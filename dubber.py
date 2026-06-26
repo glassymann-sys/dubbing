@@ -23,7 +23,7 @@ VOICE_FEMALE = "uz-UZ-MadinaNeural"
 VOICE_MALE   = "uz-UZ-SardorNeural"
 ORIG_VOLUME  = 0.08   # оригинал очень тихо на фоне
 TTS_VOLUME   = 2.5    # дублёр громче
-TTS_RATE     = "-8%"  # комфортная человеческая скорость
+TTS_RATE     = "-12%"  # медленнее — более человечно
 
 # ─────────────────────────────────────────────
 # Промпт перевода — с контекстом
@@ -218,7 +218,11 @@ def get_duration(path: str) -> float:
 
 
 def fit_to_duration(in_path: str, out_path: str, target: float):
-    """Подгоняет TTS под длину оригинального сегмента через atempo"""
+    """
+    Подгоняет TTS под длину оригинала.
+    МЯГКИЙ режим — ускоряем максимум на 20%, не больше.
+    Если TTS намного длиннее — просто обрезаем конец (пауза).
+    """
     tts_dur = get_duration(in_path)
     if tts_dur <= 0:
         try: os.rename(in_path, out_path)
@@ -227,14 +231,15 @@ def fit_to_duration(in_path: str, out_path: str, target: float):
 
     ratio = tts_dur / target
 
-    if 0.85 <= ratio <= 1.15:
-        # Близко к оригиналу — не трогаем
+    if ratio <= 1.2:
+        # TTS короче или немного длиннее — не трогаем, звучит естественно
         try: os.rename(in_path, out_path)
         except: pass
         return
 
-    # Нужно ускорить или замедлить
-    tempo = max(0.75, min(ratio, 1.9))
+    # TTS длиннее более чем на 20% — слегка ускоряем max 1.35x
+    tempo = min(ratio * 0.9, 1.35)
+    tempo = max(tempo, 0.95)
 
     cmd = ["ffmpeg", "-i", in_path,
            "-filter:a", f"atempo={tempo:.3f}",

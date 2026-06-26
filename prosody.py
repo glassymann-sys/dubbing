@@ -92,45 +92,32 @@ def load_audio(path: str) -> tuple:
 
 def apply_prosody(tts_path: str, out_path: str, orig_stats: dict) -> str:
     """
-    Применяет просодию к TTS аудио через ffmpeg:
-    - Скорость речи по динамике оригинала
-    - Высота тона по среднему pitch оригинала
+    Применяет просодию к TTS аудио.
+    ТОЛЬКО высота тона — НЕ меняем скорость (она уже настроена в fit_to_duration).
+    Это убирает роботизированность через лёгкое изменение pitch.
     """
-    # Вычисляем параметры на основе оригинала
     orig_mean = orig_stats.get("mean", 150)
-    orig_dyn  = orig_stats.get("dynamic", 0.3)
 
-    # Скорость: чем динамичнее оригинал — тем быстрее дублёр
-    # base 1.05 (чуть быстрее Edge TTS) + динамика
-    tempo = 1.05 + (orig_dyn * 0.15)
-    tempo = max(0.9, min(tempo, 1.4))
+    # Базовый pitch для голосов
+    if orig_mean < 165:
+        base_pitch = 120  # мужской
+    else:
+        base_pitch = 210  # женский
 
-    # Высота тона: нормализуем относительно стандартного голоса
-    # Мужской базовый ~120Hz, женский ~210Hz
-    if orig_mean < 165:  # мужской голос
-        base_pitch = 120
-    else:  # женский голос
-        base_pitch = 210
-
-    # Смещение в полутонах (semitones)
+    # Смещение в полутонах — очень мягко ±2 полутона max
     if orig_mean > 0 and base_pitch > 0:
         pitch_ratio = orig_mean / base_pitch
-        semitones   = 12 * np.log2(pitch_ratio)
-        semitones   = max(-3, min(semitones, 3))  # ограничиваем ±3 полутона
+        semitones   = 12 * np.log2(max(pitch_ratio, 0.1))
+        semitones   = max(-2, min(semitones, 2))
     else:
         semitones = 0
 
-    # Применяем через ffmpeg
-    filters = []
-    if abs(tempo - 1.0) > 0.03:
-        filters.append(f"atempo={tempo:.3f}")
-    if abs(semitones) > 0.2:
-        filters.append(f"asetrate=24000*{2**(semitones/12):.4f},aresample=24000")
-
-    if filters:
-        cmd = [
+    # Применяем только если смещение значимое
+    if abs(semitones) > 0.3:
+        rate = 2 ** (semitones / 12)
+        cmd  = [
             "ffmpeg", "-i", tts_path,
-            "-filter:a", ",".join(filters),
+            "-filter:a", f"asetrate=24000*{rate:.4f},aresample=24000",
             "-y", out_path
         ]
         r = subprocess.run(cmd, capture_output=True)
@@ -139,7 +126,6 @@ def apply_prosody(tts_path: str, out_path: str, orig_stats: dict) -> str:
             except: pass
             return out_path
 
-    # Если не применилось — просто переименовываем
     try:
         os.rename(tts_path, out_path)
     except:
