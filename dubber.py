@@ -91,15 +91,41 @@ def transcribe_with_diarization(audio_path: str, api_key: str,
         raise Exception(f"AssemblyAI error: {transcript.error}")
 
     segments = []
-    for utt in transcript.utterances:
-        segments.append({
-            "start":   utt.start / 1000.0,
-            "end":     utt.end   / 1000.0,
-            "text":    utt.text.strip(),
-            "speaker": utt.speaker,
-            "gender":  "male"
-        })
-        print(f"  Spk {utt.speaker} [{utt.start/1000:.1f}→{utt.end/1000:.1f}s]: {utt.text[:55]}")
+
+    # Если AssemblyAI дал мало сегментов (1-2) — разбиваем по предложениям
+    if len(transcript.utterances) <= 2:
+        print("  ⚠️ Мало сегментов — разбиваю по предложениям...")
+        for utt in transcript.utterances:
+            # Разбиваем текст на предложения по знакам препинания
+            import re
+            sentences = re.split(r'(?<=[.!?,])\s+', utt.text.strip())
+            total_dur = (utt.end - utt.start) / 1000.0
+            per_sent  = total_dur / max(len(sentences), 1)
+
+            for j, sent in enumerate(sentences):
+                sent = sent.strip()
+                if not sent:
+                    continue
+                seg_start = utt.start / 1000.0 + j * per_sent
+                seg_end   = seg_start + per_sent
+                segments.append({
+                    "start":   seg_start,
+                    "end":     seg_end,
+                    "text":    sent,
+                    "speaker": utt.speaker,
+                    "gender":  "male"
+                })
+                print(f"  Spk {utt.speaker} [{seg_start:.1f}→{seg_end:.1f}s]: {sent[:55]}")
+    else:
+        for utt in transcript.utterances:
+            segments.append({
+                "start":   utt.start / 1000.0,
+                "end":     utt.end   / 1000.0,
+                "text":    utt.text.strip(),
+                "speaker": utt.speaker,
+                "gender":  "male"
+            })
+            print(f"  Spk {utt.speaker} [{utt.start/1000:.1f}→{utt.end/1000:.1f}s]: {utt.text[:55]}")
 
     print(f"✅ {len(segments)} сегментов, спикеры: {set(s['speaker'] for s in segments)}")
     return segments
@@ -324,11 +350,19 @@ async def generate_all_tts(segments: list, temp_dir: str,
         voice = VOICE_FEMALE if seg["gender"] == "female" else VOICE_MALE
         text  = normalize(seg["translated"])
 
-        # Gemini TTS генерация
+        # Добавляем эмоциональные теги для живости
+        if seg["gender"] == "male":
+            # Мужской — уверенный, глубокий
+            styled_text = text
+        else:
+            # Женский — мягкий, естественный
+            styled_text = text
+
+        # Gemini TTS генерация с промптом для натуральности
         try:
             r = client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=text,
+                contents=f"Say this naturally and expressively as a native Uzbek speaker, with proper emotion and intonation. {'Deep confident male voice.' if seg['gender'] == 'male' else 'Warm natural female voice.'} Text: {styled_text}",
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
