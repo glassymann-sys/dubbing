@@ -158,12 +158,12 @@ Qoidalar:
 def tts_one(text: str, voice: str, gemini_key: str) -> bytes:
     """Генерирует один аудио сегмент, retry при 429"""
     client = genai.Client(api_key=gemini_key)
-    for attempt in range(4):
+    for attempt in range(5):
         try:
             r = client.models.generate_content(
-                model   = GEMINI_TTS,
+                model    = GEMINI_TTS,
                 contents = text,
-                config  = types.GenerateContentConfig(
+                config   = types.GenerateContentConfig(
                     response_modalities = ["AUDIO"],
                     speech_config = types.SpeechConfig(
                         voice_config = types.VoiceConfig(
@@ -177,12 +177,12 @@ def tts_one(text: str, voice: str, gemini_key: str) -> bytes:
             return r.candidates[0].content.parts[0].inline_data.data
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                wait = 7 * (attempt + 1)
-                print(f"  ⏳ Rate limit — wait {wait}s")
+                wait = 10 * (attempt + 1)  # 10, 20, 30, 40, 50 сек
+                print(f"  ⏳ Rate limit — wait {wait}s (attempt {attempt+1}/5)")
                 time.sleep(wait)
             else:
                 raise
-    raise Exception("Gemini TTS: rate limit exceeded")
+    raise Exception("Gemini TTS: rate limit exceeded after 5 attempts")
 
 
 def save_wav(data: bytes, path: str):
@@ -248,7 +248,12 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
     loop   = asyncio.get_event_loop()
 
     for i, seg in enumerate(segs):
-        text  = normalize(seg.get("translated") or seg["text"])
+        # Убираем метки типа "Йигит:", "Қиз:", "Speaker A:" из текста
+        raw_text = seg.get("translated") or seg["text"]
+        raw_text = re.sub(r'^[^:：]+[:：]\s*', '', raw_text).strip()
+        # Убираем эмодзи
+        raw_text = re.sub(r'[^\w\s.,!?\'"-]', '', raw_text).strip()
+        text = normalize(raw_text)
         if not text.strip(): continue
 
         voice   = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
@@ -259,13 +264,13 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
 
         try:
             audio = await loop.run_in_executor(None, tts_one, text, voice, key)
-            save_wav(audio, out)  # сохраняем напрямую — без fit_duration!
+            save_wav(audio, out)
             print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
             result.append({**seg, "audio_file": out})
 
-            # Пауза чтобы не превысить лимит (10 req/min)
+            # Пауза 7 сек между запросами (лимит 10/мин = 6 сек минимум)
             if i < len(segs) - 1:
-                await asyncio.sleep(6)
+                await asyncio.sleep(7)
 
         except Exception as e:
             print(f"  ❌ Seg {i}: {e}")
