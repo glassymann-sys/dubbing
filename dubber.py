@@ -241,39 +241,138 @@ def fit_duration(src: str, dst: str, target: float):
 
 async def generate_all_tts(segs: list, tmp: str) -> list:
     """
-    Один сегмент = один запрос = точная синхронизация.
-    Пауза 6 сек между запросами чтобы не превысить лимит 10/мин.
+    Gemini Multi-Speaker TTS — ОДИН запрос на всё видео!
+    Текст передаётся с метками Speaker1/Speaker2, Gemini генерирует
+    всё аудио за один раз с разными голосами.
+    Потом нарезаем по временным меткам оригинала.
     """
     key  = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         raise Exception("GEMINI_API_KEY не найден!")
-    loop   = asyncio.get_event_loop()
+
+    client = genai.Client(api_key=key)
+
+    # Определяем спикеров и их голоса
+    speakers  = {}
+    for seg in segs:
+        spk = seg.get("speaker", "A")
+        if spk not in speakers:
+            gender = seg.get("gender", "male")
+            speakers[spk] = {
+                "voice":  VOICE_FEMALE if gender == "female" else VOICE_MALE,
+                "gender": gender,
+                "label":  f"Speaker{len(speakers)+1}"
+            }
+
+    print(f"  🎭 Спикеры: {[(spk, d['voice']) for spk, d in speakers.items()]}")
+
+    # Строим текст с метками спикеров
+    script_parts = []
+    for seg in segs:
+        spk   = seg.get("speaker", "A")
+        label = speakers[spk]["label"]
+        raw   = seg.get("translated") or seg["text"]
+        raw   = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
+        raw   = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
+        text  = normalize(raw)
+        if text.strip():
+            script_parts.append(f"{label}: {text}")
+
+    full_script = "\n".join(script_parts)
+    print(f"  📝 Скрипт ({len(script_parts)} реплик) → 1 запрос к Gemini TTS")
+
+    # Настраиваем голоса для каждого спикера
+    voice_configs = []
+    for spk, data in speakers.items():
+        voice_configs.append(
+            types.SpeakerVoiceConfig(
+                speaker       = data["label"],
+                voice_config  = types.VoiceConfig(
+                    prebuilt_voice_config = types.PrebuiltVoiceConfig(
+                        voice_name = data["voice"]
+                    )
+                )
+            )
+        )
+
+    # Один запрос для всего видео!
+    full_wav = os.path.join(tmp, "full_audio.wav")
+    try:
+        loop  = asyncio.get_event_loop()
+
+        def call_tts():
+            return client.models.generate_content(
+                model    = GEMINI_TTS,
+                contents = full_script,
+                config   = types.GenerateContentConfig(
+                    response_modalities = ["AUDIO"],
+                    speech_config = types.SpeechConfig(
+                        multi_speaker_voice_config = types.MultiSpeakerVoiceConfig(
+                            speaker_voice_configs = voice_configs
+                        )
+                    ),
+                ),
+            )
+
+        r          = await loop.run_in_executor(None, call_tts)
+        audio_data = r.candidates[0].content.parts[0].inline_data.data
+        save_wav(audio_data, full_wav)
+        print(f"  ✅ Gemini multi-speaker аудио готово!")
+
+    except Exception as e:
+        print(f"  ⚠️ Multi-speaker failed: {e}")
+        print(f"  🔄 Fallback: генерирую по одному сегменту...")
+        # Фолбэк — по одному
+        result = []
+        for i, seg in enumerate(segs):
+            raw  = seg.get("translated") or seg["text"]
+            raw  = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
+            raw  = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
+            text = normalize(raw)
+            if not text.strip(): continue
+            voice = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
+            out   = os.path.join(tmp, f"{i:04d}.wav")
+            try:
+                audio = await loop.run_in_executor(
+                    None, tts_one, text, voice, key
+                )
+                save_wav(audio, out)
+                result.append({**seg, "audio_file": out})
+                if i < len(segs) - 1:
+                    await asyncio.sleep(6)
+            except Exception as e2:
+                print(f"  ❌ Seg {i}: {e2}")
+        return result
+
+    # Нарезаем полное аудио на сегменты по временным меткам оригинала
+    full_dur = get_dur(full_wav)
+    print(f"  ✂️  Нарезаю аудио ({full_dur:.1f}с) на {len(segs)} сегментов...")
+
     result = []
-
     for i, seg in enumerate(segs):
-        raw  = seg.get("translated") or seg["text"]
-        raw  = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
-        raw  = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
-        text = normalize(raw)
-        if not text.strip():
-            continue
+        out_seg  = os.path.join(tmp, f"{i:04d}.wav")
+        # Берём кусок аудио точно по времени оригинала
+        start = seg["start"]
+        dur   = seg["end"] - seg["start"]
 
-        voice = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
-        out   = os.path.join(tmp, f"{i:04d}.wav")
-        icon  = "👩" if seg.get("gender") == "female" else "👨"
+        # Масштабируем к длине сгенерированного аудио
+        # (оно может быть немного другой длины чем оригинал)
+        video_dur = segs[-1]["end"] if segs else full_dur
+        scale     = full_dur / video_dur if video_dur > 0 else 1.0
 
-        try:
-            audio = await loop.run_in_executor(None, tts_one, text, voice, key)
-            save_wav(audio, out)
-            print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
-            result.append({**seg, "audio_file": out})
-            # 6 сек между запросами (лимит 10/мин)
-            if i < len(segs) - 1:
-                await asyncio.sleep(6)
-        except Exception as e:
-            print(f"  ❌ Seg {i}: {e}")
+        adj_start = start * scale
+        adj_dur   = dur   * scale
 
-    print(f"✅ TTS готов! {len(result)}/{len(segs)} сегментов")
+        subprocess.run([
+            "ffmpeg", "-i", full_wav,
+            "-ss", f"{adj_start:.3f}",
+            "-t",  f"{adj_dur:.3f}",
+            "-y",  out_seg
+        ], capture_output=True)
+
+        result.append({**seg, "audio_file": out_seg})
+
+    print(f"✅ TTS готов! 1 запрос для {len(result)} сегментов")
     return result
 
 
