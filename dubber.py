@@ -241,6 +241,8 @@ def fit_duration(src: str, dst: str, target: float):
 
 async def generate_all_tts(segs: list, tmp: str) -> list:
     key  = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise Exception("GEMINI_API_KEY не найден!")
     loop = asyncio.get_event_loop()
     result = []
 
@@ -254,38 +256,16 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
         voice = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
         out   = os.path.join(tmp, f"{i:04d}.wav")
         icon  = "👩" if seg.get("gender") == "female" else "👨"
-        ok    = False
 
-        # Пробуем Gemini TTS
-        if key:
-            try:
-                audio = await loop.run_in_executor(None, tts_one, text, voice, key)
-                save_wav(audio, out)
-                ok = True
-                print(f"  [{i+1}/{len(segs)}] {icon} Gemini {voice}: {text[:40]}")
-                if i < len(segs) - 1:
-                    await asyncio.sleep(7)
-            except Exception as e:
-                print(f"  ⚠️ Gemini failed: {e} — Edge TTS fallback")
-
-        # Фолбэк на Edge TTS (бесплатно, без лимитов)
-        if not ok:
-            try:
-                import edge_tts
-                ev   = "uz-UZ-MadinaNeural" if seg.get("gender") == "female" else "uz-UZ-SardorNeural"
-                mp3  = out.replace(".wav", ".mp3")
-                tts2 = edge_tts.Communicate(text=text, voice=ev, rate="-8%")
-                await tts2.save(mp3)
-                subprocess.run(["ffmpeg", "-i", mp3, "-y", out], capture_output=True)
-                try: os.remove(mp3)
-                except: pass
-                ok = True
-                print(f"  [{i+1}/{len(segs)}] {icon} Edge TTS: {text[:40]}")
-            except Exception as e2:
-                print(f"  ❌ Seg {i}: {e2}")
-                continue
-
-        result.append({**seg, "audio_file": out})
+        try:
+            audio = await loop.run_in_executor(None, tts_one, text, voice, key)
+            save_wav(audio, out)
+            print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
+            result.append({**seg, "audio_file": out})
+            if i < len(segs) - 1:
+                await asyncio.sleep(7)
+        except Exception as e:
+            print(f"  ❌ Seg {i}: {e}")
 
     return result
 
