@@ -241,85 +241,39 @@ def fit_duration(src: str, dst: str, target: float):
 
 async def generate_all_tts(segs: list, tmp: str) -> list:
     """
-    Экономия лимита: объединяем все сегменты одного спикера в один запрос.
-    12 сегментов (2 спикера) = всего 2 запроса вместо 12!
-    Потом разбиваем аудио по меткам времени.
+    Один сегмент = один запрос = точная синхронизация.
+    Пауза 6 сек между запросами чтобы не превысить лимит 10/мин.
     """
     key  = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         raise Exception("GEMINI_API_KEY не найден!")
-    loop = asyncio.get_event_loop()
+    loop   = asyncio.get_event_loop()
+    result = []
 
-    # Группируем сегменты по спикеру
-    from collections import defaultdict
-    speaker_segs = defaultdict(list)
     for i, seg in enumerate(segs):
-        speaker_segs[seg.get("speaker", "A")].append((i, seg))
+        raw  = seg.get("translated") or seg["text"]
+        raw  = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
+        raw  = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
+        text = normalize(raw)
+        if not text.strip():
+            continue
 
-    print(f"  💡 {len(segs)} сегментов → {len(speaker_segs)} запросов (экономия!)")
-
-    # Для каждого спикера генерируем один большой аудио файл
-    speaker_audio = {}
-    for spk, spk_segs in speaker_segs.items():
-        gender = spk_segs[0][1].get("gender", "male")
-        voice  = VOICE_FEMALE if gender == "female" else VOICE_MALE
-        icon   = "👩" if gender == "female" else "👨"
-
-        # Собираем все реплики спикера с паузами между ними
-        parts = []
-        for idx, seg in spk_segs:
-            raw = seg.get("translated") or seg["text"]
-            raw = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
-            raw = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
-            txt = normalize(raw)
-            if txt.strip():
-                parts.append(txt)
-
-        full_text = ". ".join(parts)  # Пауза между репликами
-        out_path  = os.path.join(tmp, f"spk_{spk}.wav")
-
-        print(f"  {icon} Spk {spk} ({voice}): {len(parts)} реплик → 1 запрос")
+        voice = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
+        out   = os.path.join(tmp, f"{i:04d}.wav")
+        icon  = "👩" if seg.get("gender") == "female" else "👨"
 
         try:
-            audio = await loop.run_in_executor(None, tts_one, full_text, voice, key)
-            save_wav(audio, out_path)
-            speaker_audio[spk] = {"path": out_path, "segs": spk_segs, "gender": gender}
-            # Пауза между спикерами
-            await asyncio.sleep(7)
+            audio = await loop.run_in_executor(None, tts_one, text, voice, key)
+            save_wav(audio, out)
+            print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
+            result.append({**seg, "audio_file": out})
+            # 6 сек между запросами (лимит 10/мин)
+            if i < len(segs) - 1:
+                await asyncio.sleep(6)
         except Exception as e:
-            print(f"  ❌ Spk {spk}: {e}")
+            print(f"  ❌ Seg {i}: {e}")
 
-    # Нарезаем аудио каждого спикера на отдельные сегменты по времени
-    result = []
-    for spk, spk_data in speaker_audio.items():
-        full_path = spk_data["path"]
-        full_dur  = get_dur(full_path)
-        spk_segs  = spk_data["segs"]
-
-        # Вычисляем длительность каждого сегмента пропорционально
-        total_orig = sum(s["end"] - s["start"] for _, s in spk_segs)
-
-        current_pos = 0.0
-        for idx, seg in spk_segs:
-            seg_dur  = seg["end"] - seg["start"]
-            ratio    = seg_dur / total_orig if total_orig > 0 else 1.0 / len(spk_segs)
-            cut_dur  = full_dur * ratio
-            out_seg  = os.path.join(tmp, f"{idx:04d}.wav")
-
-            # Вырезаем кусок аудио
-            subprocess.run([
-                "ffmpeg", "-i", full_path,
-                "-ss", str(current_pos),
-                "-t",  str(cut_dur),
-                "-y",  out_seg
-            ], capture_output=True)
-
-            current_pos += cut_dur
-            result.append({**seg, "audio_file": out_seg})
-
-    # Сортируем по индексу
-    result.sort(key=lambda x: x["start"])
-    print(f"✅ TTS готов! {len(result)} сегментов, {len(speaker_audio)} запросов к API")
+    print(f"✅ TTS готов! {len(result)}/{len(segs)} сегментов")
     return result
 
 
