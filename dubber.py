@@ -1,218 +1,199 @@
 # -*- coding: utf-8 -*-
 """
-AI Video Dubber v7
-1. AssemblyAI → транскрипция + временные метки
-2. Пользователь редактирует перевод в UI
-3. Gemini TTS генерирует голос для каждого сегмента
-4. ffmpeg собирает финальное видео
+AI Video Dubber v8
+1. AssemblyAI  — транскрипция с временными метками
+2. Gemini      — определяет кто говорит когда + пол каждого спикера
+3. Gemini TTS  — генерирует голос (Puck=мужчина, Leda=женщина)
+4. ffmpeg      — собирает финальное видео
 """
 
-import os
-import re
-import asyncio
-import tempfile
-import subprocess
-import json
-import wave
-import time
+import os, re, json, time, asyncio, tempfile, subprocess, wave
+from typing import Callable
 
 import assemblyai as aai
 from google import genai
 from google.genai import types
 from text_normalizer import normalize
 
-# ─────────────────────────────────────────────
-VOICE_FEMALE = "Leda"
+# ── Голоса ──────────────────────────────────
 VOICE_MALE   = "Puck"
-ORIG_VOLUME  = 0.08
-TTS_VOLUME   = 2.2
+VOICE_FEMALE = "Leda"
 GEMINI_TTS   = "gemini-3.1-flash-tts-preview"
 GEMINI_MODEL = "gemini-2.5-flash"
+ORIG_VOL     = 0.08   # оригинал тихо на фоне
+DUB_VOL      = 2.3    # дублёр громко
 
 
-# ─────────────────────────────────────────────
-# Шаг 1: Извлечь аудио
-# ─────────────────────────────────────────────
+# ── 1. Извлечь аудио ────────────────────────
 
-def extract_audio(video_path: str, out_path: str) -> str:
-    cmd = ["ffmpeg", "-i", video_path,
-           "-vn", "-acodec", "pcm_s16le",
-           "-ar", "16000", "-ac", "1", "-y", out_path]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise Exception(f"ffmpeg: {r.stderr[-200:]}")
-    return out_path
-
-
-# ─────────────────────────────────────────────
-# Шаг 2: Транскрипция
-# ─────────────────────────────────────────────
-
-def transcribe(audio_path: str, api_key: str, language: str = None) -> list:
-    print("🎙️  AssemblyAI транскрибирует...")
-    aai.settings.api_key = api_key
-
-    config = aai.TranscriptionConfig(
-        speaker_labels=True,
-        speakers_expected=2,
-        language_detection=not bool(language),
-        language_code=language if language else None,
+def extract_audio(video: str, out: str):
+    r = subprocess.run(
+        ["ffmpeg", "-i", video, "-vn", "-acodec", "pcm_s16le",
+         "-ar", "16000", "-ac", "1", "-y", out],
+        capture_output=True, text=True
     )
+    if r.returncode != 0:
+        raise Exception(f"ffmpeg extract: {r.stderr[-200:]}")
 
-    t = aai.Transcriber().transcribe(audio_path, config=config)
+
+# ── 2. Транскрипция AssemblyAI ───────────────
+
+def transcribe(audio: str, language: str = None) -> list:
+    key = os.environ.get("ASSEMBLYAI_API_KEY", "")
+    if not key:
+        raise Exception("ASSEMBLYAI_API_KEY не найден!")
+
+    aai.settings.api_key = key
+    cfg = aai.TranscriptionConfig(
+        speaker_labels    = True,
+        speakers_expected = 2,
+        language_detection = not bool(language),
+        language_code      = language if language else None,
+    )
+    t = aai.Transcriber().transcribe(audio, cfg)
     if t.status == aai.TranscriptStatus.error:
         raise Exception(f"AssemblyAI: {t.error}")
 
-    segments = []
-
-    # Если мало сегментов — разбиваем по предложениям
-    utterances = t.utterances or []
-    if len(utterances) <= 2 and utterances:
-        for utt in utterances:
-            sents    = re.split(r'(?<=[.!?,])\s+', utt.text.strip())
-            dur      = (utt.end - utt.start) / 1000.0
-            per      = dur / max(len(sents), 1)
-            for j, s in enumerate(sents):
-                s = s.strip()
-                if not s: continue
-                segments.append({
-                    "start":   round(utt.start / 1000.0 + j * per, 3),
-                    "end":     round(utt.start / 1000.0 + (j+1) * per, 3),
-                    "text":    s,
-                    "speaker": utt.speaker,
-                    "gender":  "male",
-                    "translated": ""
-                })
-    else:
-        for utt in utterances:
-            segments.append({
-                "start":   round(utt.start / 1000.0, 3),
-                "end":     round(utt.end   / 1000.0, 3),
-                "text":    utt.text.strip(),
-                "speaker": utt.speaker,
-                "gender":  "male",
-                "translated": ""
-            })
-
-    print(f"✅ {len(segments)} сегментов")
-    return segments
+    segs = []
+    for u in (t.utterances or []):
+        segs.append({
+            "start":   round(u.start / 1000, 3),
+            "end":     round(u.end   / 1000, 3),
+            "text":    u.text.strip(),
+            "speaker": u.speaker,
+        })
+    print(f"  ✅ {len(segs)} сегментов, спикеры: {set(s['speaker'] for s in segs)}")
+    return segs
 
 
-# ─────────────────────────────────────────────
-# Шаг 2b: Определить пол + авто-перевод через Gemini
-# ─────────────────────────────────────────────
+# ── 3. Gemini: выравнивание перевода + пол ───
 
-def detect_and_translate(segments: list, groq_api_key: str) -> list:
-    """Gemini определяет пол И переводит за один раз"""
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return segments
+def align_and_detect(segs: list, translation: str) -> list:
+    """
+    Gemini получает:
+    - оригинальные реплики с временными метками и спикерами
+    - перевод пользователя (построчно)
+    
+    Возвращает каждому сегменту:
+    - translated: соответствующая строка перевода
+    - gender: male/female
+    """
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        # Фолбэк: просто разбиваем перевод по строкам
+        lines = [l.strip() for l in translation.strip().split("\n") if l.strip()]
+        for i, seg in enumerate(segs):
+            seg["translated"] = lines[i] if i < len(lines) else seg["text"]
+            seg["gender"]     = "male"
+        return segs
 
-    client   = genai.Client(api_key=gemini_key)
-    dialog   = "\n".join([f"Speaker {s['speaker']}: {s['text']}" for s in segments])
-    numbered = "\n".join([f"{i+1}. [{s['speaker']}] {s['text']}" for i, s in enumerate(segments)])
-    speakers = list(set(s['speaker'] for s in segments))
+    client = genai.Client(api_key=key)
 
-    prompt = f"""Vazifang ikkita:
+    orig_dialog = "\n".join([
+        f"[{s['start']:.1f}s-{s['end']:.1f}s] Speaker {s['speaker']}: {s['text']}"
+        for s in segs
+    ])
+    trans_lines = "\n".join([
+        f"{i+1}. {l.strip()}"
+        for i, l in enumerate(l for l in translation.strip().split("\n") if l.strip())
+    ])
 
-1. Har bir spiker jinsi: {speakers} uchun JSON yoz {{"A": "male", "B": "female"}}
+    prompt = f"""Vazifang:
+1. Quyidagi O'ZBEK TARJIMA qatorlarini original replikalar bilan vaqt bo'yicha moslashtir
+2. Har bir spiker uchun jins aniqla (erkak/ayol) — dialogdan, ismlardan, zamirlardан
 
-2. Har bir gapni SO'ZMA-SO'Z o'zbek tiliga tarjima qil:
-- Hech narsa qo'shma, hech narsa o'chirma
-- O'zbek tiliga ekvivalenti bo'lmagan so'zlarni aslida qoldur
-- Faqat tarjima, izoh yo'q
+ORIGINAL REPLIKALAR (vaqt bilan):
+{orig_dialog}
 
-Dialog:
-{dialog}
+O'ZBEK TARJIMA (foydalanuvchi yozgan):
+{trans_lines}
 
-Tarjima qil:
-{numbered}
+Javob faqat JSON formatda:
+{{
+  "segments": [
+    {{"index": 0, "translated": "...", "gender": "male"}},
+    {{"index": 1, "translated": "...", "gender": "female"}}
+  ]
+}}
 
-Javob formati:
-GENDERS: {{"A": "male", "B": "female"}}
-1. [tarjima]
-2. [tarjima]
-..."""
+Qoidalar:
+- Tarjima qatorlarini original replikalarga vaqt tartibida moslashtir
+- Agar tarjima qatorlari soni bilan replikalar soni mos kelmasa — eng yaqin ma'noni ishlat
+- gender: faqat "male" yoki "female"
+- translated: foydalanuvchi tarjimasidan oling, o'zgartirmang"""
 
     try:
-        r = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        r    = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         text = r.text.strip()
+        # Вырезаем JSON
+        m    = re.search(r'\{.*\}', text, re.DOTALL)
+        if not m:
+            raise ValueError("No JSON in response")
+        data = json.loads(m.group(0))
 
-        # Парсим пол
-        genders = {}
-        gender_match = re.search(r'GENDERS:\s*(\{[^}]+\})', text)
-        if gender_match:
-            try:
-                genders = json.loads(gender_match.group(1))
-            except:
-                pass
+        for item in data.get("segments", []):
+            idx = item.get("index", 0)
+            if 0 <= idx < len(segs):
+                segs[idx]["translated"] = item.get("translated", segs[idx]["text"])
+                segs[idx]["gender"]     = item.get("gender", "male")
 
-        # Парсим переводы
-        tmap = {}
-        for line in text.split("\n"):
-            line = line.strip()
-            if line and line[0].isdigit() and ". " in line:
-                try:
-                    num, txt = line.split(". ", 1)
-                    # Убираем [speaker] если есть
-                    txt = re.sub(r'^\[[A-Z]\]\s*', '', txt).strip()
-                    tmap[int(num)] = txt
-                except:
-                    pass
-
-        for i, seg in enumerate(segments):
-            seg["gender"]     = genders.get(seg["speaker"], "male")
-            seg["translated"] = tmap.get(i + 1, seg["text"])
-            icon = "👩" if seg["gender"] == "female" else "👨"
-            print(f"  {icon} {seg['text'][:30]:30} → {seg['translated'][:35]}")
+        for s in segs:
+            if "translated" not in s: s["translated"] = s["text"]
+            if "gender"     not in s: s["gender"]     = "male"
+            icon = "👩" if s["gender"] == "female" else "👨"
+            print(f"  {icon} [{s['start']:.1f}s] {s['translated'][:45]}")
 
     except Exception as e:
-        print(f"  ⚠️ Gemini: {e}")
-        # Фолбэк — оставляем оригинальный текст
-        for seg in segments:
-            seg["translated"] = seg["text"]
+        print(f"  ⚠️ Gemini align error: {e} — используем простое разбиение")
+        lines = [l.strip() for l in translation.strip().split("\n") if l.strip()]
+        for i, seg in enumerate(segs):
+            seg["translated"] = lines[i] if i < len(lines) else seg["text"]
+            seg["gender"]     = "male"
 
-    return segments
+    return segs
 
 
-# ─────────────────────────────────────────────
-# Шаг 3: Gemini TTS — генерация голоса
-# ─────────────────────────────────────────────
+# ── 4. Gemini TTS ────────────────────────────
 
-def gemini_tts_sync(text: str, voice: str, gemini_key: str) -> bytes:
-    """Синхронная генерация одного сегмента"""
+def tts_one(text: str, voice: str, gemini_key: str) -> bytes:
+    """Генерирует один аудио сегмент, retry при 429"""
     client = genai.Client(api_key=gemini_key)
-
     for attempt in range(4):
         try:
             r = client.models.generate_content(
-                model=GEMINI_TTS,
-                contents=text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice
+                model   = GEMINI_TTS,
+                contents = text,
+                config  = types.GenerateContentConfig(
+                    response_modalities = ["AUDIO"],
+                    speech_config = types.SpeechConfig(
+                        voice_config = types.VoiceConfig(
+                            prebuilt_voice_config = types.PrebuiltVoiceConfig(
+                                voice_name = voice
                             )
                         )
                     ),
                 ),
             )
             return r.candidates[0].content.parts[0].inline_data.data
-
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 wait = 7 * (attempt + 1)
-                print(f"  ⏳ Rate limit — жду {wait}с...")
+                print(f"  ⏳ Rate limit — wait {wait}s")
                 time.sleep(wait)
             else:
-                raise e
+                raise
+    raise Exception("Gemini TTS: rate limit exceeded")
 
-    raise Exception("Gemini TTS лимит исчерпан")
+
+def save_wav(data: bytes, path: str):
+    with wave.open(path, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(data)
 
 
-def get_duration(path: str) -> float:
+def get_dur(path: str) -> float:
     r = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", path],
         capture_output=True, text=True
@@ -223,190 +204,147 @@ def get_duration(path: str) -> float:
                 return float(s["duration"])
     except:
         pass
-    return 1.0
+    return 0.0
 
 
-def fit_to_duration(in_path: str, out_path: str, target: float):
-    """Подгоняет длину аудио под оригинал"""
-    tts_dur = get_duration(in_path)
-    if tts_dur <= 0 or target <= 0:
-        try: os.rename(in_path, out_path)
-        except: pass
-        return
+def fit_duration(src: str, dst: str, target: float):
+    """Подгоняет аудио под длину оригинала через atempo"""
+    dur = get_dur(src)
+    if dur <= 0 or target <= 0:
+        os.rename(src, dst); return
 
-    ratio = tts_dur / target
+    ratio = dur / target
+    if 0.88 <= ratio <= 1.12:
+        os.rename(src, dst); return
 
-    if 0.9 <= ratio <= 1.1:
-        try: os.rename(in_path, out_path)
-        except: pass
-        return
+    def apply(inp, out, tempo):
+        subprocess.run(["ffmpeg", "-i", inp, "-filter:a", f"atempo={tempo:.3f}",
+                        "-y", out], capture_output=True)
 
-    # Применяем atempo (0.5-2.0)
     if ratio > 2.0:
-        # Двойной atempo
-        mid = in_path + "_mid.wav"
-        subprocess.run(["ffmpeg", "-i", in_path, "-filter:a", "atempo=2.0", "-y", mid],
-                       capture_output=True)
-        subprocess.run(["ffmpeg", "-i", mid, "-filter:a", f"atempo={ratio/2.0:.3f}", "-y", out_path],
-                       capture_output=True)
-        try: os.remove(in_path); os.remove(mid)
+        tmp = src + "_t.wav"
+        apply(src, tmp, 2.0)
+        apply(tmp, dst, min(ratio / 2.0, 2.0))
+        try: os.remove(src); os.remove(tmp)
         except: pass
     elif ratio < 0.5:
-        mid = in_path + "_mid.wav"
-        subprocess.run(["ffmpeg", "-i", in_path, "-filter:a", "atempo=0.5", "-y", mid],
-                       capture_output=True)
-        subprocess.run(["ffmpeg", "-i", mid, "-filter:a", f"atempo={ratio/0.5:.3f}", "-y", out_path],
-                       capture_output=True)
-        try: os.remove(in_path); os.remove(mid)
+        tmp = src + "_t.wav"
+        apply(src, tmp, 0.5)
+        apply(tmp, dst, max(ratio / 0.5, 0.5))
+        try: os.remove(src); os.remove(tmp)
         except: pass
     else:
-        tempo = max(0.5, min(ratio, 2.0))
-        subprocess.run(["ffmpeg", "-i", in_path, "-filter:a", f"atempo={tempo:.3f}", "-y", out_path],
-                       capture_output=True)
-        try: os.remove(in_path)
+        apply(src, dst, max(0.5, min(ratio, 2.0)))
+        try: os.remove(src)
         except: pass
 
 
-async def generate_tts_all(segments: list, temp_dir: str) -> list:
-    print("🎤 Генерирую голос (Gemini TTS)...")
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
+async def generate_all_tts(segs: list, tmp: str) -> list:
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
         raise Exception("GEMINI_API_KEY не найден!")
 
     result = []
-    for i, seg in enumerate(segments):
-        text = normalize(seg.get("translated") or seg["text"])
-        if not text.strip():
-            continue
+    loop   = asyncio.get_event_loop()
 
-        voice    = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
-        raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.wav")
-        out_path = os.path.join(temp_dir, f"seg_{i:04d}.wav")
+    for i, seg in enumerate(segs):
+        text  = normalize(seg.get("translated") or seg["text"])
+        if not text.strip(): continue
+
+        voice   = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
+        raw     = os.path.join(tmp, f"{i:04d}_raw.wav")
+        out     = os.path.join(tmp, f"{i:04d}.wav")
+        dur     = seg["end"] - seg["start"]
+        icon    = "👩" if seg.get("gender") == "female" else "👨"
 
         try:
-            audio = await asyncio.get_event_loop().run_in_executor(
-                None, gemini_tts_sync, text, voice, gemini_key
-            )
-            with wave.open(raw_path, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                wf.writeframes(audio)
+            audio = await loop.run_in_executor(None, tts_one, text, voice, key)
+            save_wav(audio, raw)
+            fit_duration(raw, out, dur)
+            print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
+            result.append({**seg, "audio_file": out})
 
-            # Подгоняем под длину оригинала
-            fit_to_duration(raw_path, out_path, seg["duration"])
-
-            icon = "👩" if seg.get("gender") == "female" else "👨"
-            print(f"  [{i+1}/{len(segments)}] {icon} {voice}: {text[:45]}")
-            result.append({**seg, "audio_file": out_path})
-
-            # Пауза 6 сек между запросами
-            if i < len(segments) - 1:
+            # Пауза чтобы не превысить лимит (10 req/min)
+            if i < len(segs) - 1:
                 await asyncio.sleep(6)
 
         except Exception as e:
-            print(f"  ❌ Сегмент {i}: {e}")
+            print(f"  ❌ Seg {i}: {e}")
 
-    print(f"✅ TTS готов! {len(result)}/{len(segments)} сегментов")
     return result
 
 
-# ─────────────────────────────────────────────
-# Шаг 4: Сборка видео
-# ─────────────────────────────────────────────
+# ── 5. Сборка видео ──────────────────────────
 
-def create_dubbed_video(original_video: str, segments: list,
-                        output_path: str) -> str:
-    print("🎬 Собираю видео...")
-
+def build_video(video: str, segs: list, out: str):
     probe = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", original_video],
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video],
         capture_output=True, text=True
     )
-    video_dur = float(json.loads(probe.stdout)["format"]["duration"])
-
-    # Только сегменты у которых есть аудио файл
-    valid = [s for s in segments if os.path.exists(s.get("audio_file", ""))]
+    dur    = float(json.loads(probe.stdout)["format"]["duration"])
+    valid  = [s for s in segs if os.path.exists(s.get("audio_file", ""))]
     if not valid:
         raise Exception("Нет аудио сегментов!")
 
-    inputs  = ["-i", original_video]
-    filters = [f"[0:a]volume={ORIG_VOLUME}[orig]"]
+    inputs  = ["-i", video]
+    filters = [f"[0:a]volume={ORIG_VOL}[orig]"]
     labels  = []
 
-    for idx, seg in enumerate(valid):
-        inputs += ["-i", seg["audio_file"]]
-        delay   = int(seg["start"] * 1000)
-        lbl     = f"s{idx}"
-        n_input = idx + 1
-        filters.append(f"[{n_input}:a]adelay={delay}|{delay},volume={TTS_VOLUME}[{lbl}]")
+    for i, s in enumerate(valid):
+        inputs  += ["-i", s["audio_file"]]
+        delay    = int(s["start"] * 1000)
+        lbl      = f"v{i}"
+        filters.append(f"[{i+1}:a]adelay={delay}|{delay},volume={DUB_VOL}[{lbl}]")
         labels.append(f"[{lbl}]")
 
     all_in = "[orig]" + "".join(labels)
     filters.append(f"{all_in}amix=inputs={len(labels)+1}:normalize=0:dropout_transition=0[aout]")
 
-    cmd = [
+    r = subprocess.run([
         "ffmpeg", *inputs,
         "-filter_complex", ";".join(filters),
         "-map", "0:v", "-map", "[aout]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-t", str(video_dur), "-y", output_path
-    ]
+        "-t", str(dur), "-y", out
+    ], capture_output=True, text=True)
 
-    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        raise Exception(f"ffmpeg: {r.stderr[-300:]}")
-
-    print(f"✅ Видео готово: {output_path}")
-    return output_path
+        raise Exception(f"ffmpeg build: {r.stderr[-300:]}")
+    print(f"✅ Видео: {out}")
 
 
-# ─────────────────────────────────────────────
-# Главные функции
-# ─────────────────────────────────────────────
+# ── Главная функция ──────────────────────────
 
-async def transcribe_video(video_path: str, groq_api_key: str,
-                            src_language: str = None) -> list:
-    """Шаг 1: Транскрипция — возвращает сегменты для редактирования в UI"""
-    assemblyai_key = os.environ.get("ASSEMBLYAI_API_KEY", "")
-    if not assemblyai_key:
-        raise Exception("ASSEMBLYAI_API_KEY не найден!")
+async def dub_video(
+    video_path:   str,
+    output_path:  str,
+    translation:  str,
+    groq_api_key: str  = "",
+    src_language: str  = None,
+    status_cb:    Callable = None,
+):
+    def cb(msg):
+        print(msg)
+        if status_cb: status_cb(msg)
 
     with tempfile.TemporaryDirectory() as tmp:
+
+        cb("📢 1/5 Audio ajratilmoqda...")
         audio = os.path.join(tmp, "audio.wav")
         extract_audio(video_path, audio)
 
-        lang = src_language if src_language and src_language != "auto" else None
-        segs = transcribe(audio, assemblyai_key, lang)
+        cb("📝 2/5 Nutq tanib olinmoqda (AssemblyAI)...")
+        segs = transcribe(audio, src_language)
         if not segs:
-            raise Exception("Речь не найдена")
+            raise Exception("Речь не найдена в видео")
 
-        # Авто-определение пола + авто-перевод
-        print("🌐 Авто-перевод через Gemini...")
-        segs = detect_and_translate(segs, groq_api_key)
+        cb("🤝 3/5 Tarjima va jins aniqlanmoqda (Gemini)...")
+        segs = align_and_detect(segs, translation)
 
-    return segs
+        cb(f"🎤 4/5 Ovoz yaratilmoqda ({len(segs)} segment × 6s)...")
+        audio_segs = await generate_all_tts(segs, tmp)
 
+        cb("🎬 5/5 Video yig'ilmoqda...")
+        build_video(video_path, audio_segs, output_path)
 
-async def dub_video(video_path: str, output_path: str, segments: list,
-                    groq_api_key: str = "", **kwargs) -> dict:
-    """Шаг 2: Дублирование с готовыми переводами"""
-    print(f"\n🎬 Дублирую: {video_path}")
-
-    # Добавляем duration если нет
-    for seg in segments:
-        if "duration" not in seg:
-            seg["duration"] = seg["end"] - seg["start"]
-
-    with tempfile.TemporaryDirectory() as tmp:
-        print("🎤 Генерирую голос...")
-        audio_segs = await generate_tts_all(segments, tmp)
-
-        print("🎬 Собираю видео...")
-        create_dubbed_video(video_path, audio_segs, output_path)
-
-    return {
-        "output":        output_path,
-        "segments":      segments,
-        "segment_count": len(segments)
-    }
+    return {"output": output_path, "segments": segs}

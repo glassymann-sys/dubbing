@@ -11,13 +11,13 @@
       background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
       min-height: 100vh; padding: 24px; color: #fff;
     }
-    .container { max-width: 820px; margin: 0 auto; }
+    .wrap { max-width: 780px; margin: 0 auto; }
     h1 {
       font-size: 1.8rem; margin-bottom: 6px;
       background: linear-gradient(90deg, #a78bfa, #60a5fa);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .subtitle { color: rgba(255,255,255,0.4); font-size: 0.85rem; margin-bottom: 28px; }
+    .sub { color: rgba(255,255,255,0.4); font-size: 0.85rem; margin-bottom: 28px; }
     .card {
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.1);
@@ -25,329 +25,243 @@
     }
     .card h2 { font-size: 1rem; margin-bottom: 16px; color: rgba(255,255,255,0.8); }
     label {
-      display: block; font-size: 0.7rem;
-      color: rgba(255,255,255,0.4);
+      display: block; font-size: 0.7rem; color: rgba(255,255,255,0.4);
       text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
     }
-    input[type=text], input[type=password], select {
+    input[type=password], select {
       width: 100%; background: rgba(255,255,255,0.07);
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 8px; padding: 10px 12px;
-      color: #fff; font-size: 0.9rem; outline: none; margin-bottom: 12px;
+      color: #fff; font-size: 0.9rem; outline: none; margin-bottom: 14px;
     }
     select option { background: #302b63; }
-    .drop-zone {
-      border: 2px dashed rgba(167,139,250,0.35); border-radius: 12px;
-      padding: 36px 20px; text-align: center; cursor: pointer;
-      transition: all 0.2s; margin-bottom: 12px;
+    .drop {
+      border: 2px dashed rgba(167,139,250,0.4); border-radius: 12px;
+      padding: 32px 20px; text-align: center; cursor: pointer;
+      transition: all 0.2s; margin-bottom: 14px;
     }
-    .drop-zone:hover { border-color: #a78bfa; background: rgba(167,139,250,0.07); }
-    .drop-zone .icon { font-size: 2.2rem; margin-bottom: 8px; }
-    .drop-zone p { color: rgba(255,255,255,0.45); font-size: 0.88rem; }
-    .drop-zone .fname { color: #a78bfa; margin-top: 6px; font-size: 0.82rem; }
+    .drop:hover, .drop.over { border-color: #a78bfa; background: rgba(167,139,250,0.07); }
+    .drop .ico { font-size: 2rem; margin-bottom: 8px; }
+    .drop p   { color: rgba(255,255,255,0.4); font-size: 0.85rem; }
+    .drop .fn { color: #a78bfa; margin-top: 6px; font-size: 0.82rem; }
+    textarea {
+      width: 100%; background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px; padding: 12px 14px;
+      color: #fff; font-size: 0.9rem; resize: vertical;
+      min-height: 160px; outline: none; font-family: inherit; line-height: 1.6;
+      transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: rgba(167,139,250,0.5); }
+    textarea::placeholder { color: rgba(255,255,255,0.25); }
+    .hint { font-size: 0.75rem; color: rgba(255,255,255,0.3); margin-top: 6px; line-height: 1.5; }
     .btn {
-      width: 100%; padding: 13px;
+      width: 100%; padding: 14px;
       background: linear-gradient(135deg, #a78bfa, #60a5fa);
       border: none; border-radius: 10px;
-      color: #fff; font-size: 0.95rem; font-weight: 700;
-      cursor: pointer; transition: opacity 0.2s, transform 0.15s;
+      color: #fff; font-size: 1rem; font-weight: 700;
+      cursor: pointer; transition: opacity 0.2s, transform 0.15s; margin-top: 4px;
     }
-    .btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn:hover    { opacity: 0.88; transform: translateY(-1px); }
     .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
-    .btn-outline {
-      background: transparent;
-      border: 1px solid rgba(167,139,250,0.4);
-      color: #a78bfa; padding: 8px 16px;
-      border-radius: 8px; cursor: pointer; font-size: 0.85rem;
-      transition: all 0.2s;
-    }
-    .btn-outline:hover { background: rgba(167,139,250,0.1); }
-    .status-box {
+    .status {
       padding: 12px 16px; border-radius: 10px;
       font-size: 0.88rem; margin-top: 12px; display: none;
     }
-    .status-loading { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.2); }
-    .status-ok      { background: rgba(52,211,153,0.1);  color: #34d399; border: 1px solid rgba(52,211,153,0.2); }
-    .status-err     { background: rgba(239,68,68,0.1);   color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
-
-    /* Сегменты */
-    .segments-wrap { }  /* убрали display:none отсюда — теперь в HTML style */
-    .seg-item {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 10px; padding: 14px; margin-bottom: 10px;
-    }
-    .seg-header {
-      display: flex; align-items: center; gap: 10px;
-      margin-bottom: 10px;
-    }
-    .seg-time { font-size: 0.75rem; color: rgba(255,255,255,0.35); min-width: 80px; }
-    .seg-speaker {
-      font-size: 0.72rem; padding: 2px 8px; border-radius: 12px;
-      background: rgba(167,139,250,0.15); color: #a78bfa;
-    }
-    .seg-gender select {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 6px; padding: 3px 8px;
-      color: #fff; font-size: 0.75rem;
-      margin: 0; width: auto;
-    }
-    .seg-orig {
-      font-size: 0.85rem; color: rgba(255,255,255,0.5);
-      margin-bottom: 8px; line-height: 1.4;
-    }
-    .seg-trans {
-      width: 100%; background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px; padding: 8px 12px;
-      color: #fff; font-size: 0.9rem;
-      resize: none; outline: none; font-family: inherit;
-      line-height: 1.4; min-height: 44px;
-      transition: border-color 0.2s;
-    }
-    .seg-trans:focus { border-color: rgba(167,139,250,0.5); }
-    .result-box { }  /* убрали display:none отсюда — теперь в HTML style */
-    video { width: 100%; border-radius: 10px; margin-bottom: 12px; }
-    .dl-btn {
-      display: inline-block; padding: 10px 24px;
-      background: linear-gradient(135deg, #34d399, #10b981);
-      border-radius: 8px; color: #fff; font-weight: 700;
-      text-decoration: none; font-size: 0.9rem;
-    }
-    code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.78rem; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .s-load { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.2); }
+    .s-ok   { background: rgba(52,211,153,0.1);  color: #34d399; border: 1px solid rgba(52,211,153,0.2); }
+    .s-err  { background: rgba(239,68,68,0.1);   color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
     .spinner {
-      display: inline-block; width: 14px; height: 14px;
+      display: inline-block; width: 13px; height: 13px;
       border: 2px solid rgba(167,139,250,0.3); border-top-color: #a78bfa;
-      border-radius: 50%; animation: spin 0.8s linear infinite;
-      vertical-align: middle; margin-right: 6px;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 7px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .steps { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+    .step {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.85rem; color: rgba(255,255,255,0.35);
+      padding: 8px 12px; border-radius: 8px; transition: all 0.3s;
+    }
+    .step.active { color: #a78bfa; background: rgba(167,139,250,0.08); }
+    .step.done   { color: #34d399; }
+    .step-icon   { font-size: 1.1rem; width: 22px; text-align: center; }
+    video { width: 100%; border-radius: 10px; margin-bottom: 14px; }
+    .dl { display: inline-block; padding: 11px 28px;
+          background: linear-gradient(135deg, #34d399, #10b981);
+          border-radius: 8px; color: #fff; font-weight: 700;
+          text-decoration: none; font-size: 0.9rem; }
+    code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.78rem; }
   </style>
 </head>
 <body>
-<div class="container">
+<div class="wrap">
   <h1>🎬 Uzbek AI Dubbing</h1>
-  <p class="subtitle">Video → Transkriptsiya → Tarjima (o'zing tahrirlaysan) → Ovoz → Tayyor!</p>
+  <p class="sub">Video + Tarjima → AI ovoz → Tayyor!</p>
 
-  <!-- STEP 1: API Keys + Video -->
-  <div class="card" id="step1Card">
-    <h2>⚙️ 1-qadam: API kalitlar</h2>
-    <div class="grid2">
-      <div>
-        <label>Groq API Key</label>
-        <input type="password" id="groqKey" placeholder="gsk_..."/>
-      </div>
-      <div>
-        <label>Til / Язык</label>
-        <select id="langSelect">
-          <option value="auto">🤖 Avtomatik</option>
-          <option value="en">🇺🇸 English</option>
-          <option value="ru">🇷🇺 Русский</option>
-        </select>
-      </div>
-    </div>
+  <!-- НАСТРОЙКИ -->
+  <div class="card">
+    <h2>⚙️ Sozlamalar</h2>
+    <label>Groq API Key (tarjima uchun fallback)</label>
+    <input type="password" id="groqKey" placeholder="gsk_..."/>
+    <label>Asl til / Исходный язык</label>
+    <select id="lang">
+      <option value="auto">🤖 Avtomatik</option>
+      <option value="en">🇺🇸 English</option>
+      <option value="ru">🇷🇺 Русский</option>
+    </select>
+  </div>
 
-    <label>🎬 Video yuklang</label>
-    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-      <div class="icon">📹</div>
+  <!-- ВИДЕО + ПЕРЕВОД -->
+  <div class="card">
+    <h2>🎬 Video va tarjima</h2>
+
+    <label>Video yuklang</label>
+    <div class="drop" id="drop" onclick="document.getElementById('fi').click()">
+      <div class="ico">📹</div>
       <p>Video faylni bu yerga tashlang yoki bosing</p>
-      <div class="fname" id="fileName">Fayl tanlanmagan</div>
+      <div class="fn" id="fn">Fayl tanlanmagan</div>
     </div>
-    <input type="file" id="fileInput" accept="video/*" style="display:none" onchange="onFile(event)"/>
+    <input type="file" id="fi" accept="video/*" style="display:none" onchange="onFile(event)"/>
 
-    <button class="btn" id="transcribeBtn" onclick="startTranscribe()">
-      📝 Transkriptsiya qilish
-    </button>
-    <div class="status-box" id="transcribeStatus"></div>
-  </div>
+    <label>O'zbek tarjimani kiriting</label>
+    <textarea id="translation" placeholder="Bu yerga o'zbek tilidagi tarjimani yozing...
 
-  <!-- STEP 2: Edit translation -->
-  <div class="card" id="step2Card" style="display:none;">
-    <h2>✏️ 2-qadam: Tarjimani tekshir va tahrirlang</h2>
-    <p style="color:rgba(255,255,255,0.4);font-size:0.82rem;margin-bottom:16px;">
-      AI avtomatik tarjima qildi. Xatolarni to'g'rilang, keyin "Dublyaj" tugmasini bosing.
+Misol:
+- Salom! Siz juda chiroylisiz.
+- Rahmat, lekin men band edim.
+- Oh, ajrashgansizmi? Juda yaxshi!
+- Bu juda tez bo'ldi..."></textarea>
+    <p class="hint">
+      💡 AI avtomatik tushunadi: kim erkak, kim ayol, qaysi gap qaysi vaqtda aytilgan.<br>
+      Har bir gapni yangi qatorga yozing. Soni videodagi replikalarga mos bo'lsin.
     </p>
-    <div id="segmentsList"></div>
-    <button class="btn" id="dubBtn" onclick="startDub()" style="margin-top:8px;">
-      🎤 Dublyaj qilish
-    </button>
-    <div class="status-box" id="dubStatus"></div>
+
+    <button class="btn" id="dubBtn" onclick="startDub()">🚀 Dublyaj qilish</button>
+    <div class="status" id="st"></div>
+
+    <div class="steps" id="steps" style="display:none">
+      <div class="step" id="s1"><div class="step-icon">🎙️</div> Audio ajratilmoqda va tanib olinmoqda...</div>
+      <div class="step" id="s2"><div class="step-icon">👥</div> Kim erkak, kim ayol aniqlanmoqda...</div>
+      <div class="step" id="s3"><div class="step-icon">🤝</div> Tarjima vaqt bilan bog'lanmoqda...</div>
+      <div class="step" id="s4"><div class="step-icon">🎤</div> Ovoz yaratilmoqda (Gemini TTS)...</div>
+      <div class="step" id="s5"><div class="step-icon">🎬</div> Video yig'ilmoqda...</div>
+    </div>
   </div>
 
-  <!-- RESULT -->
-  <div class="card" id="resultCard" style="display:none;">
+  <!-- РЕЗУЛЬТАТ -->
+  <div class="card" id="result" style="display:none">
     <h2>🎉 Tayyor!</h2>
-    <video id="resultVideo" controls></video>
-    <a class="dl-btn" id="downloadBtn" href="#" download>⬇️ Yuklab olish</a>
+    <video id="vid" controls></video><br>
+    <a class="dl" id="dlBtn" href="#" download>⬇️ Yuklab olish</a>
   </div>
 </div>
 
 <script>
-  let selectedFile = null;
-  let currentTaskId = null;
-  let currentSegments = [];
-  let pollInterval = null;
+  let file = null;
+  let taskId = null;
+  let poll = null;
 
   // Drag & Drop
-  const dz = document.getElementById('dropZone');
-  dz.addEventListener('dragover',  e => { e.preventDefault(); dz.style.borderColor='#a78bfa'; });
-  dz.addEventListener('dragleave', () => { dz.style.borderColor=''; });
+  const dz = document.getElementById('drop');
+  dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('over'));
   dz.addEventListener('drop', e => {
-    e.preventDefault();
-    dz.style.borderColor = '';
+    e.preventDefault(); dz.classList.remove('over');
     if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
   });
 
-  function onFile(e)  { setFile(e.target.files[0]); }
+  function onFile(e) { setFile(e.target.files[0]); }
   function setFile(f) {
-    selectedFile = f;
-    document.getElementById('fileName').textContent = `✅ ${f.name} (${(f.size/1024/1024).toFixed(1)} MB)`;
+    file = f;
+    document.getElementById('fn').textContent = `✅ ${f.name} (${(f.size/1024/1024).toFixed(1)} MB)`;
   }
 
-  function showStatus(id, type, msg) {
-    const el = document.getElementById(id);
+  function st(type, msg) {
+    const el = document.getElementById('st');
     el.style.display = 'block';
-    el.className = `status-box status-${type}`;
-    el.innerHTML = type === 'loading'
-      ? `<span class="spinner"></span>${msg}`
-      : msg;
+    el.className = `status s-${type}`;
+    el.innerHTML = type === 'load' ? `<span class="spinner"></span>${msg}` : msg;
   }
 
-  // ── ТРАНСКРИПЦИЯ ──
-  async function startTranscribe() {
-    const groq = document.getElementById('groqKey').value.trim();
-    const lang = document.getElementById('langSelect').value;
-    if (!selectedFile) { showStatus('transcribeStatus','err','❌ Video faylni tanlang!'); return; }
+  function setStep(n, state) {
+    for (let i = 1; i <= 5; i++) {
+      const el = document.getElementById(`s${i}`);
+      if (!el) continue;
+      if (i < n) el.className = 'step done';
+      else if (i === n) el.className = 'step active';
+      else el.className = 'step';
+    }
+  }
 
-    document.getElementById('transcribeBtn').disabled = true;
-    showStatus('transcribeStatus','loading','📝 Transkriptsiya qilinmoqda...');
+  async function startDub() {
+    const groq = document.getElementById('groqKey').value.trim();
+    const lang = document.getElementById('lang').value;
+    const trans = document.getElementById('translation').value.trim();
+
+    if (!file)  { st('err', '❌ Video faylni tanlang!'); return; }
+    if (!trans) { st('err', '❌ Tarjimani kiriting!'); return; }
+
+    document.getElementById('dubBtn').disabled = true;
+    document.getElementById('steps').style.display = 'flex';
+    document.getElementById('result').style.display = 'none';
+    setStep(1);
+    st('load', '📝 Ishlanmoqda...');
 
     const fd = new FormData();
-    fd.append('video', selectedFile);
+    fd.append('video', file);
+    fd.append('translation', trans);
     fd.append('language', lang);
     fd.append('groq_key', groq);
 
     try {
-      const r    = await fetch('http://localhost:8000/transcribe', { method:'POST', body:fd });
+      const r    = await fetch('http://localhost:8000/dub', { method: 'POST', body: fd });
       const data = await r.json();
-      currentTaskId = data.task_id;
-      pollInterval  = setInterval(pollTranscribe, 2000);
+      taskId = data.task_id;
+      poll   = setInterval(pollStatus, 2500);
     } catch {
-      showStatus('transcribeStatus','err','❌ Server topilmadi. <code>python3 server.py</code>');
-      document.getElementById('transcribeBtn').disabled = false;
-    }
-  }
-
-  async function pollTranscribe() {
-    try {
-      const r    = await fetch(`http://localhost:8000/status/${currentTaskId}`);
-      const data = await r.json();
-      showStatus('transcribeStatus','loading', data.message || '⏳...');
-
-      if (data.status === 'ready_to_dub') {
-        clearInterval(pollInterval);
-        showStatus('transcribeStatus','ok', data.message);
-        document.getElementById('transcribeBtn').disabled = false;
-        currentSegments = data.segments || [];
-        buildSegments(currentSegments);
-        const step2 = document.getElementById('step2Card');
-        step2.style.display = 'block';
-        step2.style.visibility = 'visible';
-        step2.style.opacity = '1';
-        setTimeout(() => step2.scrollIntoView({behavior:'smooth'}), 100);
-      } else if (data.status === 'error') {
-        clearInterval(pollInterval);
-        showStatus('transcribeStatus','err','❌ ' + data.message);
-        document.getElementById('transcribeBtn').disabled = false;
-      }
-    } catch {}
-  }
-
-  // ── СЕГМЕНТЫ ──
-  function buildSegments(segs) {
-    const wrap = document.getElementById('segmentsList');
-    wrap.innerHTML = '';
-    segs.forEach((seg, i) => {
-      const icon = seg.gender === 'female' ? '👩' : '👨';
-      wrap.innerHTML += `
-        <div class="seg-item">
-          <div class="seg-header">
-            <span class="seg-time">${fmtTime(seg.start)} → ${fmtTime(seg.end)}</span>
-            <span class="seg-speaker">Spk ${seg.speaker}</span>
-            <div class="seg-gender">
-              <select onchange="setGender(${i}, this.value)">
-                <option value="male"   ${seg.gender!=='female'?'selected':''}>👨 Erkak</option>
-                <option value="female" ${seg.gender==='female'?'selected':''}>👩 Ayol</option>
-              </select>
-            </div>
-          </div>
-          <div class="seg-orig">${seg.text}</div>
-          <textarea class="seg-trans" rows="2"
-            onchange="setTranslation(${i}, this.value)"
-            oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
-          >${seg.translated || ''}</textarea>
-        </div>`;
-    });
-  }
-
-  function setGender(i, val)      { currentSegments[i].gender     = val; }
-  function setTranslation(i, val) { currentSegments[i].translated = val; }
-  function fmtTime(s) {
-    const m = Math.floor(s/60);
-    return `${m}:${String(Math.floor(s%60)).padStart(2,'0')}`;
-  }
-
-  // ── ДУБЛИРОВАНИЕ ──
-  async function startDub() {
-    document.getElementById('dubBtn').disabled = true;
-    showStatus('dubStatus','loading','🎤 Ovoz yaratilmoqda... (har segment uchun 6 soniya)');
-
-    // Собираем актуальные данные из textarea
-    document.querySelectorAll('.seg-trans').forEach((ta, i) => {
-      if (currentSegments[i]) currentSegments[i].translated = ta.value.trim();
-    });
-
-    try {
-      const r = await fetch('http://localhost:8000/dub', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ task_id: currentTaskId, segments: currentSegments })
-      });
-      if (!r.ok) throw new Error('err');
-      pollInterval = setInterval(pollDub, 3000);
-    } catch {
-      showStatus('dubStatus','err','❌ Server xatosi');
+      st('err', '❌ Server topilmadi. Terminailda: <code>python3 server.py</code>');
       document.getElementById('dubBtn').disabled = false;
     }
   }
 
-  async function pollDub() {
+  const stepMap = {
+    '1/5': 1, 'Audio': 1, 'аудио': 1,
+    '2/5': 2, 'AssemblyAI': 2, 'Транскри': 2,
+    '3/5': 3, 'Выравни': 3, 'align': 3, 'bog': 3,
+    '4/5': 4, 'TTS': 4, 'голос': 4, 'Gemini': 4,
+    '5/5': 5, 'видео': 5, 'ffmpeg': 5,
+  };
+
+  async function pollStatus() {
+    if (!taskId) return;
     try {
-      const r    = await fetch(`http://localhost:8000/status/${currentTaskId}`);
+      const r    = await fetch(`http://localhost:8000/status/${taskId}`);
       const data = await r.json();
-      showStatus('dubStatus','loading', data.message || '⏳...');
+      const msg  = data.message || '';
+
+      st('load', msg);
+      for (const [key, n] of Object.entries(stepMap)) {
+        if (msg.includes(key)) { setStep(n); break; }
+      }
 
       if (data.status === 'done') {
-        clearInterval(pollInterval);
-        showStatus('dubStatus','ok','🎉 Dublyaj tayyor!');
+        clearInterval(poll);
+        setStep(6);
+        st('ok', '🎉 Dublyaj tayyor!');
         document.getElementById('dubBtn').disabled = false;
-        showResult();
+        const url = `http://localhost:8000/download/${taskId}`;
+        document.getElementById('vid').src     = url;
+        document.getElementById('dlBtn').href  = url;
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result').scrollIntoView({behavior:'smooth'});
       } else if (data.status === 'error') {
-        clearInterval(pollInterval);
-        showStatus('dubStatus','err','❌ ' + data.message);
+        clearInterval(poll);
+        st('err', '❌ ' + data.message);
         document.getElementById('dubBtn').disabled = false;
       }
     } catch {}
-  }
-
-  function showResult() {
-    const url = `http://localhost:8000/download/${currentTaskId}`;
-    document.getElementById('resultCard').style.display = 'block';
-    document.getElementById('resultVideo').src = url;
-    document.getElementById('downloadBtn').href = url;
-    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
   }
 </script>
 </body>
