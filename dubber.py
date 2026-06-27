@@ -240,40 +240,52 @@ def fit_duration(src: str, dst: str, target: float):
 
 
 async def generate_all_tts(segs: list, tmp: str) -> list:
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise Exception("GEMINI_API_KEY не найден!")
-
+    key  = os.environ.get("GEMINI_API_KEY", "")
+    loop = asyncio.get_event_loop()
     result = []
-    loop   = asyncio.get_event_loop()
 
     for i, seg in enumerate(segs):
-        # Убираем метки типа "Йигит:", "Қиз:", "Speaker A:" из текста
         raw_text = seg.get("translated") or seg["text"]
         raw_text = re.sub(r'^[^:：]+[:：]\s*', '', raw_text).strip()
-        # Убираем эмодзи
         raw_text = re.sub(r'[^\w\s.,!?\'"-]', '', raw_text).strip()
         text = normalize(raw_text)
         if not text.strip(): continue
 
-        voice   = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
-        raw     = os.path.join(tmp, f"{i:04d}_raw.wav")
-        out     = os.path.join(tmp, f"{i:04d}.wav")
-        dur     = seg["end"] - seg["start"]
-        icon    = "👩" if seg.get("gender") == "female" else "👨"
+        voice = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
+        out   = os.path.join(tmp, f"{i:04d}.wav")
+        icon  = "👩" if seg.get("gender") == "female" else "👨"
+        ok    = False
 
-        try:
-            audio = await loop.run_in_executor(None, tts_one, text, voice, key)
-            save_wav(audio, out)
-            print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
-            result.append({**seg, "audio_file": out})
+        # Пробуем Gemini TTS
+        if key:
+            try:
+                audio = await loop.run_in_executor(None, tts_one, text, voice, key)
+                save_wav(audio, out)
+                ok = True
+                print(f"  [{i+1}/{len(segs)}] {icon} Gemini {voice}: {text[:40]}")
+                if i < len(segs) - 1:
+                    await asyncio.sleep(7)
+            except Exception as e:
+                print(f"  ⚠️ Gemini failed: {e} — Edge TTS fallback")
 
-            # Пауза 7 сек между запросами (лимит 10/мин = 6 сек минимум)
-            if i < len(segs) - 1:
-                await asyncio.sleep(7)
+        # Фолбэк на Edge TTS (бесплатно, без лимитов)
+        if not ok:
+            try:
+                import edge_tts
+                ev   = "uz-UZ-MadinaNeural" if seg.get("gender") == "female" else "uz-UZ-SardorNeural"
+                mp3  = out.replace(".wav", ".mp3")
+                tts2 = edge_tts.Communicate(text=text, voice=ev, rate="-8%")
+                await tts2.save(mp3)
+                subprocess.run(["ffmpeg", "-i", mp3, "-y", out], capture_output=True)
+                try: os.remove(mp3)
+                except: pass
+                ok = True
+                print(f"  [{i+1}/{len(segs)}] {icon} Edge TTS: {text[:40]}")
+            except Exception as e2:
+                print(f"  ❌ Seg {i}: {e2}")
+                continue
 
-        except Exception as e:
-            print(f"  ❌ Seg {i}: {e}")
+        result.append({**seg, "audio_file": out})
 
     return result
 
