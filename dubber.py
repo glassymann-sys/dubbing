@@ -259,8 +259,7 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
 
         try:
             audio = await loop.run_in_executor(None, tts_one, text, voice, key)
-            save_wav(audio, raw)
-            fit_duration(raw, out, dur)
+            save_wav(audio, out)  # сохраняем напрямую — без fit_duration!
             print(f"  [{i+1}/{len(segs)}] {icon} {voice}: {text[:45]}")
             result.append({**seg, "audio_file": out})
 
