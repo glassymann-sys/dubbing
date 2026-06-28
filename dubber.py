@@ -217,7 +217,7 @@ Qoidalar:
 # ─── 5. Gemini TTS → аудио ───────────────────
 
 def run_tts(script: str, speakers: dict, key: str) -> bytes:
-    """Один запрос → полное аудио для всего видео"""
+    """Один запрос → полное аудио для всего видео. Retry при 429."""
     voice_configs = [
         types.SpeakerVoiceConfig(
             speaker      = data["label"],
@@ -230,20 +230,34 @@ def run_tts(script: str, speakers: dict, key: str) -> bytes:
         for data in speakers.values()
     ]
 
-    client = genai.Client(api_key=key)
-    r = client.models.generate_content(
-        model    = GEMINI_TTS,
-        contents = script,
-        config   = types.GenerateContentConfig(
-            response_modalities = ["AUDIO"],
-            speech_config = types.SpeechConfig(
-                multi_speaker_voice_config = types.MultiSpeakerVoiceConfig(
-                    speaker_voice_configs = voice_configs
-                )
-            ),
-        ),
-    )
-    return r.candidates[0].content.parts[0].inline_data.data
+    for attempt in range(5):
+        try:
+            client = genai.Client(api_key=key)
+            r = client.models.generate_content(
+                model    = GEMINI_TTS,
+                contents = script,
+                config   = types.GenerateContentConfig(
+                    response_modalities = ["AUDIO"],
+                    speech_config = types.SpeechConfig(
+                        multi_speaker_voice_config = types.MultiSpeakerVoiceConfig(
+                            speaker_voice_configs = voice_configs
+                        )
+                    ),
+                ),
+            )
+            return r.candidates[0].content.parts[0].inline_data.data
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                # Извлекаем время ожидания из ошибки
+                import re as _re
+                m = _re.search(r'retry in (\d+)', err)
+                wait = int(m.group(1)) + 5 if m else 60 * (attempt + 1)
+                print(f"  ⏳ Rate limit — жду {wait}с... (попытка {attempt+1}/5)")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("Gemini TTS: лимит исчерпан. Попробуй завтра или используй другой API ключ.")
 
 
 def save_wav(data: bytes, path: str):
