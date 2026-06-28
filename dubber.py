@@ -521,7 +521,10 @@ async def dub_video(
         cb("🤝 3/5 Tarjima va jins aniqlanmoqda (Gemini)...")
         segs = align_and_detect(segs, translation)
 
-        cb(f"🎤 4/5 Ovoz yaratilmoqda ({len(segs)} segment × 6s)...")
+        cb(f"🎤 4/5 Ovoz yaratilmoqda — Gemini video analiz qilmoqda...")
+        # Передаём путь к видео через сегменты для анализа
+        for seg in segs:
+            seg["_video_path"] = video_path
         audio_segs = await generate_all_tts(segs, tmp)
 
         cb("🎬 5/5 Video yig'ilmoqda...")
