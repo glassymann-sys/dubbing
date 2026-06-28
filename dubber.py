@@ -344,35 +344,82 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
                 print(f"  ❌ Seg {i}: {e2}")
         return result
 
-    # Нарезаем полное аудио на сегменты по временным меткам оригинала
+    # Нарезаем полное аудио по паузам между репликами
     full_dur = get_dur(full_wav)
-    print(f"  ✂️  Нарезаю аудио ({full_dur:.1f}с) на {len(segs)} сегментов...")
+    print(f"  ✂️  Нарезаю аудио ({full_dur:.1f}с) на {len(segs)} сегментов по паузам...")
+
+    # Читаем аудио и находим паузы через энергию сигнала
+    with wave.open(full_wav, 'rb') as wf:
+        fr   = wf.getframerate()
+        raw  = wf.readframes(wf.getnframes())
+    audio_np = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+
+    # Находим паузы (тишина < порога)
+    frame_ms  = 20  # 20ms фреймы
+    frame_sz  = int(fr * frame_ms / 1000)
+    energies  = []
+    for j in range(0, len(audio_np) - frame_sz, frame_sz):
+        chunk = audio_np[j:j+frame_sz]
+        energies.append(float(np.sqrt(np.mean(chunk**2))))
+
+    # Порог тишины
+    max_e     = max(energies) if energies else 1
+    threshold = max_e * 0.02  # 2% от максимума = тишина
+
+    # Находим границы реплик (переходы тишина→речь)
+    boundaries = []
+    in_speech  = False
+    for j, e in enumerate(energies):
+        t = j * frame_ms / 1000.0
+        if not in_speech and e > threshold:
+            boundaries.append(("start", t))
+            in_speech = True
+        elif in_speech and e <= threshold:
+            boundaries.append(("end", t))
+            in_speech = False
+    if in_speech:
+        boundaries.append(("end", full_dur))
+
+    # Собираем отрезки речи
+    speech_segments = []
+    for j in range(0, len(boundaries)-1, 2):
+        if boundaries[j][0] == "start" and boundaries[j+1][0] == "end":
+            speech_segments.append((boundaries[j][1], boundaries[j+1][1]))
+
+    print(f"  🔍 Найдено {len(speech_segments)} речевых отрезков в аудио")
 
     result = []
+    # Сопоставляем найденные отрезки с оригинальными сегментами
+    n_match = min(len(speech_segments), len(segs))
+
     for i, seg in enumerate(segs):
-        out_seg  = os.path.join(tmp, f"{i:04d}.wav")
-        # Берём кусок аудио точно по времени оригинала
-        start = seg["start"]
-        dur   = seg["end"] - seg["start"]
+        out_seg = os.path.join(tmp, f"{i:04d}.wav")
 
-        # Масштабируем к длине сгенерированного аудио
-        # (оно может быть немного другой длины чем оригинал)
-        video_dur = segs[-1]["end"] if segs else full_dur
-        scale     = full_dur / video_dur if video_dur > 0 else 1.0
-
-        adj_start = start * scale
-        adj_dur   = dur   * scale
-
-        subprocess.run([
-            "ffmpeg", "-i", full_wav,
-            "-ss", f"{adj_start:.3f}",
-            "-t",  f"{adj_dur:.3f}",
-            "-y",  out_seg
-        ], capture_output=True)
+        if i < len(speech_segments):
+            s_start, s_end = speech_segments[i]
+            s_dur = s_end - s_start
+            subprocess.run([
+                "ffmpeg", "-i", full_wav,
+                "-ss", f"{s_start:.3f}",
+                "-t",  f"{s_dur:.3f}",
+                "-y",  out_seg
+            ], capture_output=True)
+        else:
+            # Если отрезков меньше чем сегментов — берём по пропорции
+            video_dur = segs[-1]["end"] if segs else full_dur
+            scale     = full_dur / video_dur if video_dur > 0 else 1.0
+            adj_start = seg["start"] * scale
+            adj_dur   = (seg["end"] - seg["start"]) * scale
+            subprocess.run([
+                "ffmpeg", "-i", full_wav,
+                "-ss", f"{adj_start:.3f}",
+                "-t",  f"{adj_dur:.3f}",
+                "-y",  out_seg
+            ], capture_output=True)
 
         result.append({**seg, "audio_file": out_seg})
 
-    print(f"✅ TTS готов! 1 запрос для {len(result)} сегментов")
+    print(f"✅ TTS готов! 1 запрос → {len(result)} сегментов")
     return result
 
 
