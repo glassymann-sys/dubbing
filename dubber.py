@@ -143,8 +143,7 @@ def build_tts_script(segs: list, video_path: str, key: str) -> tuple:
 
     # Базовый скрипт с временными метками
     base = "\n".join(
-        f"[{s['start']:.1f}s→{s['end']:.1f}s] {speakers[s['speaker']]['label']}: "
-        f"{re.sub(chr(8203)+'|[^\\w\\s.,!?\\'-]', '', re.sub(r\"^[^:：]+[:：]\\s*\", '', s.get('translated', s['text']))).strip()}"
+        f"[{s['start']:.1f}s→{s['end']:.1f}s] {speakers[s['speaker']]['label']}: {normalize(re.sub(chr(8203), '', re.sub(r'^[^:]+[:] *', '', s.get('translated', s['text'])))).strip()}"
         for s in segs if s.get("translated", s["text"]).strip()
     )
 
