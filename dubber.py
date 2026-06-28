@@ -239,7 +239,112 @@ def fit_duration(src: str, dst: str, target: float):
         except: pass
 
 
-async def generate_all_tts(segs: list, tmp: str) -> list:
+async def analyze_video_and_build_script(
+    video_path: str, segs: list, key: str
+) -> str:
+    """
+    Gemini Vision смотрит видео и строит оптимальный TTS скрипт с паузами.
+    Знает где нужна длинная/короткая пауза, где эмоция, где ускорить.
+    """
+    client = genai.Client(api_key=key)
+    loop   = asyncio.get_event_loop()
+
+    # Строим базовый скрипт
+    speakers = {}
+    for seg in segs:
+        spk = seg.get("speaker", "A")
+        if spk not in speakers:
+            speakers[spk] = {
+                "voice": VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE,
+                "label": f"Speaker{len(speakers)+1}"
+            }
+
+    lines = []
+    for seg in segs:
+        spk   = seg.get("speaker", "A")
+        label = speakers[spk]["label"]
+        raw   = seg.get("translated") or seg["text"]
+        raw   = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
+        raw   = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
+        text  = normalize(raw)
+        if text.strip():
+            # Добавляем временную метку для Gemini
+            lines.append(f"[{seg['start']:.1f}s-{seg['end']:.1f}s] {label}: {text}")
+
+    base_script = "\n".join(lines)
+
+    # Загружаем видео в Gemini
+    print("  🎬 Загружаю видео в Gemini для анализа...")
+
+    def upload_and_analyze():
+        # Загружаем видео файл
+        video_file = client.files.upload(file=video_path)
+
+        # Ждём пока обработается
+        import time
+        while video_file.state.name == "PROCESSING":
+            time.sleep(2)
+            video_file = client.files.get(name=video_file.name)
+
+        if video_file.state.name == "FAILED":
+            raise Exception("Video upload failed")
+
+        prompt = f"""Sen dublyaj rejissorisin. Quyidagi video va uzbek tarjimasini ko'rasan.
+
+Video faylini analiz qil va TTS uchun optimal skript yarat:
+1. Har bir replika orasida qancha pauza kerakligini aniqla (original videodagi pauza vaqtiga qarab)
+2. His-tuyg'ularni belgilagan holda (hayrat, kulgu, savol va h.k.)
+3. Speaker1 = erkak ovoz (Puck), Speaker2 = ayol ovoz (Leda)
+
+ORIGINAL REPLIKALAR (vaqt bilan):
+{base_script}
+
+NATIJA FORMATI — faqat skriptni yoz, izoh yo'q:
+Speaker1: [birinchi replikaning tarjimasi]
+<break time="1.5s"/>
+Speaker2: [ikkinchi replikaning tarjimasi]
+<break time="0.8s"/>
+...
+
+QOIDALAR:
+- Original videodagi pauza vaqtiga mos <break time="Xs"/> qo'y
+- Savol ohangida "?" qo'y
+- Hayrat uchun "!" ishlatish mumkin
+- Faqat tayyor skriptni yoz"""
+
+        response = client.models.generate_content(
+            model    = GEMINI_MODEL,
+            contents = [video_file, prompt],
+        )
+
+        # Удаляем загруженный файл
+        try:
+            client.files.delete(name=video_file.name)
+        except:
+            pass
+
+        return response.text.strip()
+
+    try:
+        script = await loop.run_in_executor(None, upload_and_analyze)
+        print(f"  ✅ Gemini создал скрипт с паузами!")
+        print(f"  📝 {script[:200]}...")
+        return script, speakers
+    except Exception as e:
+        print(f"  ⚠️ Video analysis failed: {e} — используем базовый скрипт")
+        # Фолбэк — простой скрипт без видео анализа
+        simple_lines = []
+        for seg in segs:
+            spk   = seg.get("speaker", "A")
+            label = speakers[spk]["label"]
+            raw   = seg.get("translated") or seg["text"]
+            raw   = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
+            raw   = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
+            text  = normalize(raw)
+            if text.strip():
+                # Добавляем паузу между репликами на основе разницы времён
+                simple_lines.append(f"{label}: {text}")
+        return "\n".join(simple_lines), speakers
     """
     1 запрос на всё видео через Gemini Multi-Speaker TTS.
     Весь дублированный аудио кладём поверх видео целиком — без нарезки.
