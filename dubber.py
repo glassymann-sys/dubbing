@@ -454,6 +454,78 @@ QOIDALAR:
         return result
 
 
+# ── 4b. Генерация TTS ────────────────────────
+
+async def generate_all_tts(segs: list, tmp: str) -> list:
+    """Анализирует видео через Gemini Vision + генерирует multi-speaker TTS"""
+    key  = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise Exception("GEMINI_API_KEY не найден!")
+    loop = asyncio.get_event_loop()
+
+    video_path = segs[0].get("_video_path", "") if segs else ""
+    script, speakers = await analyze_video_and_build_script(video_path, segs, key)
+
+    print(f"  🎭 Спикеры: {[(spk, d['voice']) for spk, d in speakers.items()]}")
+
+    voice_configs = [
+        types.SpeakerVoiceConfig(
+            speaker      = data["label"],
+            voice_config = types.VoiceConfig(
+                prebuilt_voice_config = types.PrebuiltVoiceConfig(
+                    voice_name = data["voice"]
+                )
+            )
+        )
+        for spk, data in speakers.items()
+    ]
+
+    full_wav = os.path.join(tmp, "dubbed_full.wav")
+
+    def call_multi():
+        return genai.Client(api_key=key).models.generate_content(
+            model    = GEMINI_TTS,
+            contents = script,
+            config   = types.GenerateContentConfig(
+                response_modalities = ["AUDIO"],
+                speech_config = types.SpeechConfig(
+                    multi_speaker_voice_config = types.MultiSpeakerVoiceConfig(
+                        speaker_voice_configs = voice_configs
+                    )
+                ),
+            ),
+        )
+
+    try:
+        r     = await loop.run_in_executor(None, call_multi)
+        audio = r.candidates[0].content.parts[0].inline_data.data
+        save_wav(audio, full_wav)
+        dur = get_dur(full_wav)
+        print(f"  ✅ Аудио готово: {dur:.1f}с")
+        return [{"start": 0.0, "end": dur, "audio_file": full_wav,
+                 "speaker": "ALL", "gender": "male", "translated": script}]
+    except Exception as e:
+        print(f"  ⚠️ Multi-speaker failed: {e} — fallback per-segment...")
+        result = []
+        for i, seg in enumerate(segs):
+            raw  = seg.get("translated") or seg["text"]
+            raw  = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
+            raw  = re.sub(r'[^\w\s.,!?\'"-]', '', raw).strip()
+            text = normalize(raw)
+            if not text.strip(): continue
+            voice = VOICE_FEMALE if seg.get("gender") == "female" else VOICE_MALE
+            out   = os.path.join(tmp, f"{i:04d}.wav")
+            try:
+                audio2 = await loop.run_in_executor(None, tts_one, text, voice, key)
+                save_wav(audio2, out)
+                result.append({**seg, "audio_file": out})
+                if i < len(segs) - 1:
+                    await asyncio.sleep(6)
+            except Exception as e2:
+                print(f"  ❌ Seg {i}: {e2}")
+        return result
+
+
 # ── 5. Сборка видео ──────────────────────────
 
 def build_video(video: str, segs: list, out: str):
