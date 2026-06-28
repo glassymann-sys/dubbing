@@ -483,7 +483,9 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
     full_wav = os.path.join(tmp, "dubbed_full.wav")
 
     def call_multi():
-        return genai.Client(api_key=key).models.generate_content(
+        # Создаём новый клиент для TTS запроса
+        tts_client = genai.Client(api_key=key)
+        return tts_client.models.generate_content(
             model    = GEMINI_TTS,
             contents = script,
             config   = types.GenerateContentConfig(
