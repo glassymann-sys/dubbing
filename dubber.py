@@ -203,7 +203,14 @@ def tts_one_sync(text: str, voice: str, key: str) -> bytes:
                     ),
                 ),
             )
-            return r.candidates[0].content.parts[0].inline_data.data
+            # Проверяем что ответ не пустой
+            candidates = r.candidates
+            if not candidates or not candidates[0].content.parts:
+                raise ValueError("Empty TTS response")
+            data = candidates[0].content.parts[0].inline_data
+            if data is None:
+                raise ValueError("TTS inline_data is None")
+            return data.data
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 m    = re.search(r'retry in (\d+)', str(e))
