@@ -128,8 +128,8 @@ QOIDALAR:
 
 def build_tts_script(segs: list, video_path: str, key: str) -> tuple:
     """
-    Gemini смотрит видео и строит скрипт с точными паузами.
-    Возвращает (script, speakers_dict).
+    Gemini смотрит видео → копирует интонацию → строит скрипт с паузами.
+    Аудио должно совпадать по длительности с видео.
     """
     # Определяем спикеров
     speakers = {}
@@ -141,19 +141,30 @@ def build_tts_script(segs: list, video_path: str, key: str) -> tuple:
                 "label": f"Speaker{len(speakers)+1}"
             }
 
+    # Получаем длительность видео
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+        capture_output=True, text=True
+    )
+    video_dur = float(json.loads(probe.stdout)["format"]["duration"])
+
     # Базовый скрипт с временными метками
+    def clean(text):
+        text = re.sub(r'^[^:]+[:]\s*', '', text).strip()
+        text = re.sub(r'[^\w\s.,!?\'-]', '', text).strip()
+        return normalize(text)
+
     base = "\n".join(
-        f"[{s['start']:.1f}s→{s['end']:.1f}s] {speakers[s['speaker']]['label']}: {normalize(re.sub(chr(8203), '', re.sub(r'^[^:]+[:] *', '', s.get('translated', s['text'])))).strip()}"
-        for s in segs if s.get("translated", s["text"]).strip()
+        f"[{s['start']:.2f}s → {s['end']:.2f}s] {speakers[s['speaker']]['label']}: {clean(s.get('translated', s['text']))}"
+        for s in segs if clean(s.get("translated", s["text"]))
     )
 
-    print("  🎬 Загружаю видео в Gemini Vision...")
+    print(f"  🎬 Загружаю видео в Gemini Vision... (длительность: {video_dur:.1f}с)")
 
     try:
         client     = genai.Client(api_key=key)
         video_file = client.files.upload(file=video_path)
 
-        # Ждём обработки
         for _ in range(30):
             if video_file.state.name != "PROCESSING":
                 break
@@ -163,25 +174,44 @@ def build_tts_script(segs: list, video_path: str, key: str) -> tuple:
         if video_file.state.name == "FAILED":
             raise Exception("Video upload failed")
 
-        prompt = f"""Sen professional dublyaj rejissorisin.
-Video va o'zbek tarjimasini ko'r.
+        spk_labels = "\n".join(
+            f"- {data['label']} = {data['voice']} ({'erkak' if data['voice'] == VOICE_MALE else 'ayol'}) ovoz"
+            for data in speakers.values()
+        )
 
-REPLIKALAR (vaqt bilan):
+        prompt = f"""Sen professional dublyaj rejissorisin.
+
+Videoni diqqat bilan ko'r va quyidagi vazifani baj:
+
+VIDEO MA'LUMOTI:
+- Umumiy uzunlik: {video_dur:.2f} soniya
+- Spikerlari: 
+{spk_labels}
+
+O'ZBEK REPLIKALARI (original vaqt bilan):
 {base}
 
-Har bir replika orasidagi TOK PAUZA VAQTINI videodagi original pauza bo'yicha aniqla.
-Natijani faqat TTS skript shaklida yoz:
+VAZIFA — TTS uchun skript yarat:
 
-{speakers[list(speakers.keys())[0]]['label']}: [birinchi replika]
-<break time="X.Xs"/>
-{speakers[list(speakers.keys())[1]]['label'] if len(speakers) > 1 else speakers[list(speakers.keys())[0]]['label']}: [ikkinchi replika]
-<break time="X.Xs"/>
+1. MUDDATI MUHIM: Yaratilgan audio aynan {video_dur:.1f} soniya bo'lishi kerak!
+   - Replikalar orasidagi pauza vaqtini videodagi original pauza ga teng qil
+   - Agar gap qisqa bo'lsa — pauza uzunroq bo'lsin
+   - Agar gap uzun bo'lsa — pauza qisqaroq bo'lsin
+
+2. INTONATSIYA: Videodagi original intonatsiyani ko'r va AYNAN shu intonatsiyada yoz:
+   - Savol → "?" bilan yoz
+   - Hayrat → "!" bilan yoz  
+   - Kulgu yoki quvnoqlik → jumlani tezkroq yaz
+   - Sekin va jiddiy → jumlani vazmin yaz
+
+3. FORMAT — faqat skriptni yoz, hech qanday izoh yo'q:
+Speaker1: [replika matni]
+<break time="X.XXs"/>
+Speaker2: [replika matni]
+<break time="X.XXs"/>
 ...
 
-Qoidalar:
-- Har bir replika ORASIDA faqat 1 ta <break> qo'y — uning vaqti original videodagi PAUZA ga teng bo'lsin
-- Replikani o'zgartirma
-- Faqat skriptni yoz, izoh yo'q"""
+ESLATMA: Barcha <break> vaqtlari yig'indisi + replika vaqtlari = {video_dur:.1f} soniya bo'lishi SHART!"""
 
         response = client.models.generate_content(
             model    = GEMINI_MODEL,
@@ -191,26 +221,23 @@ Qoidalar:
         except: pass
 
         script = response.text.strip()
-        print(f"  ✅ Скрипт готов!")
+        # Убираем markdown если есть
+        script = re.sub(r'```.*?\n?', '', script).strip()
+        print(f"  ✅ Скрипт готов (видео: {video_dur:.1f}с)")
         return script, speakers
 
     except Exception as e:
         print(f"  ⚠️ Vision failed: {e} — строю скрипт вручную")
-        # Фолбэк: паузы вычисляем из временных меток
         lines = []
         for i, seg in enumerate(segs):
-            raw   = seg.get("translated", seg["text"])
-            raw   = re.sub(r'^[^:：]+[:：]\s*', '', raw).strip()
-            raw   = re.sub(r'[^\w\s.,!?\'-]', '', raw).strip()
-            text  = normalize(raw)
+            text  = clean(seg.get("translated", seg["text"]))
             label = speakers[seg["speaker"]]["label"]
-            if text.strip():
+            if text:
                 lines.append(f"{label}: {text}")
-                # Добавляем паузу между сегментами
                 if i < len(segs) - 1:
-                    gap = round(segs[i+1]["start"] - seg["end"], 1)
-                    if gap > 0.2:
-                        lines.append(f'<break time="{min(gap, 3.0):.1f}s"/>')
+                    gap = round(segs[i+1]["start"] - seg["end"], 2)
+                    if gap > 0.1:
+                        lines.append(f'<break time="{min(gap, 3.0):.2f}s"/>')
         return "\n".join(lines), speakers
 
 
