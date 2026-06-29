@@ -386,8 +386,44 @@ async def dub_video(
 
         dub_wav = os.path.join(tmp, "dubbed.wav")
         save_wav(audio_data, dub_wav)
-        dur = get_dur(dub_wav)
-        print(f"  ✅ Аудио: {dur:.1f}с")
+        dub_dur = get_dur(dub_wav)
+        print(f"  ✅ Аудио: {dub_dur:.1f}с")
+
+        # Получаем длительность видео
+        probe = subprocess.run(
+            ["ffprobe", "-v", "-quiet", "-print_format", "json", "-show_format", video_path],
+            capture_output=True, text=True
+        )
+        video_dur = float(json.loads(probe.stdout)["format"]["duration"])
+
+        # Если аудио длиннее видео — ускоряем через atempo
+        if dub_dur > video_dur * 1.05:
+            ratio = dub_dur / video_dur
+            print(f"  ⚡ Ускоряю аудио: {dub_dur:.1f}с → {video_dur:.1f}с (atempo={ratio:.3f})")
+            fitted = os.path.join(tmp, "dubbed_fitted.wav")
+
+            if ratio <= 2.0:
+                subprocess.run([
+                    "ffmpeg", "-i", dub_wav,
+                    "-filter:a", f"atempo={ratio:.3f}",
+                    "-y", fitted
+                ], capture_output=True)
+            else:
+                # Двойной atempo если > 2.0x
+                mid = os.path.join(tmp, "dubbed_mid.wav")
+                subprocess.run([
+                    "ffmpeg", "-i", dub_wav,
+                    "-filter:a", "atempo=2.0",
+                    "-y", mid
+                ], capture_output=True)
+                subprocess.run([
+                    "ffmpeg", "-i", mid,
+                    "-filter:a", f"atempo={ratio/2.0:.3f}",
+                    "-y", fitted
+                ], capture_output=True)
+
+            dub_wav = fitted
+            print(f"  ✅ После ускорения: {get_dur(dub_wav):.1f}с")
 
         # 6. Сборка
         cb("🎬 Видео yig'ilmoqda...")
