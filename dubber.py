@@ -103,12 +103,15 @@ QOIDALAR:
         r    = genai.Client(api_key=key).models.generate_content(
             model=GEMINI_MODEL, contents=prompt)
         m    = re.search(r'\{.*\}', r.text.strip(), re.DOTALL)
+        if not m:
+            raise ValueError("No JSON")
         data = json.loads(m.group(0))
         for item in data.get("segments", []):
             idx = item.get("index", 0)
             if 0 <= idx < len(segs):
                 segs[idx]["translated"] = item.get("translated", segs[idx]["text"])
-                segs[idx]["gender"]     = item.get("gender", "male")
+                raw_gender = item.get("gender", "male").lower()
+                segs[idx]["gender"] = "female" if "female" in raw_gender or "ayol" in raw_gender or "woman" in raw_gender else "male"
     except Exception as e:
         print(f"  ⚠️ Gemini align error: {e}")
         for i, seg in enumerate(segs):
@@ -391,7 +394,7 @@ async def dub_video(
 
         # Получаем длительность видео
         probe = subprocess.run(
-            ["ffprobe", "-v", "-quiet", "-print_format", "json", "-show_format", video_path],
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
             capture_output=True, text=True
         )
         video_dur = float(json.loads(probe.stdout)["format"]["duration"])
