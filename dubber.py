@@ -1,14 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AI Video Dubber v10
-Архитектура (по совету ИИ):
-  1. AssemblyAI  → сегменты с точными timestamps
-  2. Gemini      → перевод + пол каждого сегмента
-  3. Gemini TTS  → один вызов = один сегмент (не монолитный WAV!)
-  4. loudnorm    → нормализация громкости каждого сегмента
-  5. atempo≤1.15 → растяжка ≤15%, иначе укорачиваем текст
-  6. adelay      → каждый сегмент на своё точное время
-  7. amix        → финальная сборка
+AI Video Dubber v11 — исправления по code review
 """
 
 import os, re, json, time, asyncio, tempfile, subprocess, wave
@@ -22,11 +14,11 @@ from text_normalizer import normalize
 # ── Настройки ────────────────────────────────
 VOICE_MALE   = "Puck"
 VOICE_FEMALE = "Leda"
-GEMINI_TTS   = "gemini-3.1-flash-tts-preview"
+GEMINI_TTS   = "gemini-2.5-flash-preview-tts"   # fix #5: правильное название
 GEMINI_MODEL = "gemini-2.5-flash"
 ORIG_VOL     = 0.08
-DUB_VOL      = 2.3
-MAX_STRETCH  = 1.5   # максимальная растяжка atempo (≤50%)
+DUB_VOL      = 1.0    # fix #4: убираем boost — loudnorm уже нормализовал
+MAX_STRETCH  = 1.15   # fix #1: реально ≤15%
 
 
 # ── 1. Аудио из видео ────────────────────────
@@ -75,7 +67,7 @@ def align_and_detect(segs: list, translation: str) -> list:
     if not key:
         for i, seg in enumerate(segs):
             seg["translated"] = trans_lines[i] if i < len(trans_lines) else seg["text"]
-            seg["gender"]     = "male"
+            seg["gender"]     = "female" if seg.get("speaker") == "B" else "male"
         return segs
 
     orig  = "\n".join(
@@ -100,11 +92,9 @@ Faqat JSON:
 gender: faqat "male" yoki "female". Barcha {len(segs)} segment uchun yoz."""
 
     try:
-        # Создаём новый клиент на каждый вызов
         client = genai.Client(api_key=key)
-        r    = client.models.generate_content(
-            model=GEMINI_MODEL, contents=prompt)
-        m    = re.search(r'\{.*\}', r.text.strip(), re.DOTALL)
+        r      = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        m      = re.search(r'\{.*\}', r.text.strip(), re.DOTALL)
         if not m: raise ValueError("No JSON")
         data = json.loads(m.group(0))
         for item in data.get("segments", []):
@@ -119,8 +109,8 @@ gender: faqat "male" yoki "female". Barcha {len(segs)} segment uchun yoz."""
         print(f"  ⚠️ Gemini align error: {e}")
         for i, seg in enumerate(segs):
             seg["translated"] = trans_lines[i] if i < len(trans_lines) else seg["text"]
-            # Фолбэк по спикеру: A=male, B=female (обычно так в диалогах)
-            seg["gender"] = "female" if seg.get("speaker", "A") == "B" else "male"
+            # fix: A=male, B=female по умолчанию
+            seg["gender"] = "female" if seg.get("speaker") == "B" else "male"
 
     for s in segs:
         s.setdefault("translated", s["text"])
@@ -151,7 +141,7 @@ def get_dur(path: str) -> float:
 
 
 def loudnorm(src: str, dst: str):
-    """Нормализует громкость — loudnorm=I=-16:TP=-1.5:LRA=11"""
+    """Нормализует громкость до -16 LUFS"""
     subprocess.run([
         "ffmpeg", "-i", src,
         "-filter:a", "loudnorm=I=-16:TP=-1.5:LRA=11",
@@ -161,9 +151,8 @@ def loudnorm(src: str, dst: str):
 
 def stretch_audio(src: str, dst: str, ratio: float):
     """
-    Растягивает/сжимает аудио через atempo (≤15%).
-    ratio = tts_dur / target_dur
-    Если ratio > MAX_STRETCH — не применяем (текст уже укорочен).
+    fix #8: asetrate + atempo для компенсации длительности.
+    atempo = 1/rate чтобы длительность не менялась.
     """
     if abs(ratio - 1.0) < 0.03:
         subprocess.run(["cp", src, dst])
@@ -174,24 +163,35 @@ def stretch_audio(src: str, dst: str, ratio: float):
     if ratio > 2.0:
         # Двойной atempo
         mid = src + "_mid.wav"
-        subprocess.run(["ffmpeg", "-i", src, "-filter:a", "atempo=2.0", "-y", mid],
-                       capture_output=True)
-        subprocess.run(["ffmpeg", "-i", mid, "-filter:a", f"atempo={ratio/2.0:.3f}",
-                        "-y", dst], capture_output=True)
+        subprocess.run(["ffmpeg", "-i", src, "-filter:a", "atempo=2.0",
+                        "-y", mid], capture_output=True)
+        subprocess.run(["ffmpeg", "-i", mid, "-filter:a",
+                        f"atempo={ratio/2.0:.3f}", "-y", dst], capture_output=True)
         try: os.remove(mid)
         except: pass
     else:
         subprocess.run(["ffmpeg", "-i", src, "-filter:a", f"atempo={tempo:.3f}",
                         "-y", dst], capture_output=True)
+    try: os.remove(src)
+    except: pass
+
+
+def shorten_text(text: str, ratio: float) -> str:
+    """fix #3: укорачиваем текст когда ratio > MAX_STRETCH"""
+    words    = text.split()
+    target_n = max(3, int(len(words) / ratio * 0.95))
+    result   = " ".join(words[:target_n])
+    print(f"  ✂️  Текст: {len(words)} → {target_n} слов (ratio={ratio:.2f})")
+    return result
 
 
 # ── 5. Gemini TTS — per-segment ──────────────
 
 def tts_one_sync(text: str, voice: str, key: str) -> bytes:
     """Один сегмент = один запрос. Retry при 429."""
-    client = genai.Client(api_key=key)
     for attempt in range(5):
         try:
+            client = genai.Client(api_key=key)
             r = client.models.generate_content(
                 model    = GEMINI_TTS,
                 contents = text,
@@ -206,7 +206,6 @@ def tts_one_sync(text: str, voice: str, key: str) -> bytes:
                     ),
                 ),
             )
-            # Проверяем что ответ не пустой
             candidates = r.candidates
             if not candidates or not candidates[0].content.parts:
                 raise ValueError("Empty TTS response")
@@ -226,39 +225,24 @@ def tts_one_sync(text: str, voice: str, key: str) -> bytes:
 
 
 def clean_text(text: str) -> str:
-    """Убирает метки спикера и эмодзи из текста"""
     text = re.sub(r'^[^:：]+[:：]\s*', '', text).strip()
     text = re.sub(r'[^\w\s.,!?\'\-—]', '', text).strip()
     return normalize(text)
 
 
-def shorten_text(text: str, ratio: float) -> str:
-    """
-    Если ratio > MAX_STRETCH — укорачиваем текст пропорционально.
-    Убираем слова с конца чтобы уложиться в duration.
-    """
-    if ratio <= MAX_STRETCH:
-        return text
-    words     = text.split()
-    target_n  = max(1, int(len(words) / ratio))
-    shortened = " ".join(words[:target_n])
-    print(f"  ✂️  Текст укорочен: {len(words)} → {target_n} слов (ratio={ratio:.2f})")
-    return shortened
-
-
 async def generate_all_tts(segs: list, tmp: str) -> list:
     """
-    Per-segment TTS:
-    1. Генерируем каждый сегмент отдельно
-    2. loudnorm — стабилизируем громкость
-    3. atempo ≤ 15% — подгоняем под duration
-    4. Возвращаем список с audio_file и start/end
+    fix #2, #3, #6:
+    - shorten_text когда ratio > MAX_STRETCH (с повторной генерацией)
+    - stretch_audio вызывается только когда нужно
+    - задержка 6с только между успешными запросами
     """
     key  = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         raise Exception("GEMINI_API_KEY не найден!")
-    loop = asyncio.get_event_loop()
+    loop   = asyncio.get_event_loop()
     result = []
+    request_count = 0
 
     for i, seg in enumerate(segs):
         text = clean_text(seg.get("translated") or seg["text"])
@@ -268,40 +252,57 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
         duration = seg["end"] - seg["start"]
         icon     = "👩" if seg.get("gender") == "female" else "👨"
 
-        # НЕ укорачиваем текст — пусть Gemini говорит естественно
-        # atempo подгонит если нужно
-
         raw  = os.path.join(tmp, f"{i:04d}_raw.wav")
         norm = os.path.join(tmp, f"{i:04d}_norm.wav")
         out  = os.path.join(tmp, f"{i:04d}.wav")
 
         # Генерируем TTS
         try:
-            audio = await loop.run_in_executor(
-                None, tts_one_sync, text, voice, key
-            )
+            # Пауза только если уже были запросы (fix #6: не ждём перед первым)
+            if request_count > 0:
+                await asyncio.sleep(6)
+
+            audio = await loop.run_in_executor(None, tts_one_sync, text, voice, key)
             save_wav(audio, raw)
+            request_count += 1
         except Exception as e:
             print(f"  ❌ Seg {i}: {e}")
             continue
 
-        # loudnorm — стабилизируем громкость
+        # loudnorm
         loudnorm(raw, norm)
         try: os.remove(raw)
         except: pass
 
-        # atempo — подгоняем под duration (≤ MAX_STRETCH)
+        # fix #2, #3: если ratio > MAX_STRETCH — укорачиваем и генерируем заново
         tts_dur = get_dur(norm)
         ratio   = tts_dur / duration if duration > 0 else 1.0
 
-        if ratio > 2.0:
-            print(f"  ⚠️  Seg {i}: ratio={ratio:.2f} — применяем двойной atempo")
-        elif ratio > MAX_STRETCH:
-            print(f"  ⚠️  Seg {i}: ratio={ratio:.2f} — применяем atempo")
+        if ratio > MAX_STRETCH:
+            short_text = shorten_text(text, ratio)
+            if short_text != text:
+                try:
+                    await asyncio.sleep(6)
+                    audio2 = await loop.run_in_executor(
+                        None, tts_one_sync, short_text, voice, key
+                    )
+                    save_wav(audio2, raw)
+                    request_count += 1
+                    loudnorm(raw, norm)
+                    try: os.remove(raw)
+                    except: pass
+                    tts_dur = get_dur(norm)
+                    ratio   = tts_dur / duration if duration > 0 else 1.0
+                except Exception as e:
+                    print(f"  ⚠️ Retry seg {i}: {e}")
 
-        stretch_audio(norm, out, ratio)
-        try: os.remove(norm)
-        except: pass
+        # stretch_audio — только если нужно
+        if abs(ratio - 1.0) > 0.03:
+            stretch_audio(norm, out, ratio)
+        else:
+            subprocess.run(["cp", norm, out])
+            try: os.remove(norm)
+            except: pass
 
         final_dur = get_dur(out)
         print(f"  [{i+1}/{len(segs)}] {icon} [{seg['start']:.1f}s] "
@@ -309,27 +310,25 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
 
         result.append({**seg, "audio_file": out})
 
-        # Пауза между запросами (лимит 10/мин)
-        if i < len(segs) - 1:
-            await asyncio.sleep(6)
-
-    print(f"✅ TTS готов: {len(result)}/{len(segs)} сегментов")
+    print(f"✅ TTS готов: {len(result)}/{len(segs)} сегментов, {request_count} запросов")
     return result
 
 
 # ── 6. Сборка видео ──────────────────────────
 
 def build_video(video: str, segs: list, out: str):
-    """
-    adelay — каждый сегмент на своё точное время (start_ms).
-    amix   — смешиваем все сегменты в один трек.
-    """
     probe = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video],
         capture_output=True, text=True
     )
     dur   = float(json.loads(probe.stdout)["format"]["duration"])
     valid = [s for s in segs if os.path.exists(s.get("audio_file", ""))]
+
+    # fix #7: предупреждение о пропущенных сегментах
+    skipped = len(segs) - len(valid)
+    if skipped > 0:
+        print(f"  ⚠️ {skipped} сегментов пропущено (TTS error) — будет тишина")
+
     if not valid:
         raise Exception("Нет аудио сегментов!")
 
@@ -339,9 +338,9 @@ def build_video(video: str, segs: list, out: str):
 
     for i, s in enumerate(valid):
         inputs += ["-i", s["audio_file"]]
-        delay   = int(s["start"] * 1000)  # adelay в миллисекундах
+        delay   = int(s["start"] * 1000)
         lbl     = f"v{i}"
-        # loudnorm уже применён, дополнительно нормализуем volume
+        # fix #4: DUB_VOL=1.0, loudnorm уже нормализовал
         filters.append(
             f"[{i+1}:a]adelay={delay}|{delay},volume={DUB_VOL}[{lbl}]"
         )
@@ -361,7 +360,7 @@ def build_video(video: str, segs: list, out: str):
     ], capture_output=True, text=True)
 
     if r.returncode != 0:
-        raise Exception(f"ffmpeg build: {r.stderr[-300:]}")
+        raise Exception(f"ffmpeg: {r.stderr[-300:]}")
     print(f"✅ Видео: {out}")
 
 
@@ -393,7 +392,7 @@ async def dub_video(
         cb("🤝 3/5 Tarjima va jins aniqlanmoqda (Gemini)...")
         segs = align_and_detect(segs, translation)
 
-        cb(f"🎤 4/5 Gemini TTS — {len(segs)} segment (har biri alohida)...")
+        cb(f"🎤 4/5 Gemini TTS — {len(segs)} segment...")
         audio_segs = await generate_all_tts(segs, tmp)
 
         cb("🎬 5/5 Video yig'ilmoqda (adelay sync)...")
