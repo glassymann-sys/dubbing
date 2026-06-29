@@ -100,7 +100,9 @@ Faqat JSON:
 gender: faqat "male" yoki "female". Barcha {len(segs)} segment uchun yoz."""
 
     try:
-        r    = genai.Client(api_key=key).models.generate_content(
+        # Создаём новый клиент на каждый вызов
+        client = genai.Client(api_key=key)
+        r    = client.models.generate_content(
             model=GEMINI_MODEL, contents=prompt)
         m    = re.search(r'\{.*\}', r.text.strip(), re.DOTALL)
         if not m: raise ValueError("No JSON")
@@ -117,7 +119,8 @@ gender: faqat "male" yoki "female". Barcha {len(segs)} segment uchun yoz."""
         print(f"  ⚠️ Gemini align error: {e}")
         for i, seg in enumerate(segs):
             seg["translated"] = trans_lines[i] if i < len(trans_lines) else seg["text"]
-            seg["gender"]     = "male"
+            # Фолбэк по спикеру: A=male, B=female (обычно так в диалогах)
+            seg["gender"] = "female" if seg.get("speaker", "A") == "B" else "male"
 
     for s in segs:
         s.setdefault("translated", s["text"])
