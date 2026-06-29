@@ -26,7 +26,7 @@ GEMINI_TTS   = "gemini-3.1-flash-tts-preview"
 GEMINI_MODEL = "gemini-2.5-flash"
 ORIG_VOL     = 0.08
 DUB_VOL      = 2.3
-MAX_STRETCH  = 1.15   # максимальная растяжка atempo (≤15%)
+MAX_STRETCH  = 1.5   # максимальная растяжка atempo (≤50%)
 
 
 # ── 1. Аудио из видео ────────────────────────
@@ -265,12 +265,8 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
         duration = seg["end"] - seg["start"]
         icon     = "👩" if seg.get("gender") == "female" else "👨"
 
-        # Если текст слишком длинный — укорачиваем заранее
-        # (грубая оценка: 1 слово ≈ 0.35с для Gemini TTS)
-        est_dur  = len(text.split()) * 0.35
-        pre_ratio = est_dur / duration if duration > 0 else 1.0
-        if pre_ratio > MAX_STRETCH:
-            text = shorten_text(text, pre_ratio)
+        # НЕ укорачиваем текст — пусть Gemini говорит естественно
+        # atempo подгонит если нужно
 
         raw  = os.path.join(tmp, f"{i:04d}_raw.wav")
         norm = os.path.join(tmp, f"{i:04d}_norm.wav")
@@ -295,9 +291,10 @@ async def generate_all_tts(segs: list, tmp: str) -> list:
         tts_dur = get_dur(norm)
         ratio   = tts_dur / duration if duration > 0 else 1.0
 
-        if ratio > MAX_STRETCH:
-            # Всё равно применяем но выводим предупреждение
-            print(f"  ⚠️  Seg {i}: ratio={ratio:.2f} > {MAX_STRETCH} — применяем atempo")
+        if ratio > 2.0:
+            print(f"  ⚠️  Seg {i}: ratio={ratio:.2f} — применяем двойной atempo")
+        elif ratio > MAX_STRETCH:
+            print(f"  ⚠️  Seg {i}: ratio={ratio:.2f} — применяем atempo")
 
         stretch_audio(norm, out, ratio)
         try: os.remove(norm)
